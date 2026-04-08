@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+*.log
+.pw-profile/
+chrome-profile/
+test-results/
+playwright-report/

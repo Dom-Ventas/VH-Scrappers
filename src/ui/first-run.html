@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Search Term Scrapper — First Launch Setup</title>
+    <style>
+      :root { color-scheme: light; }
+      body {
+        font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+        background: #f6f8fa;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+      }
+      .card {
+        background: #fff;
+        max-width: 480px;
+        width: 90%;
+        padding: 32px 36px;
+        border-radius: 12px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.08);
+      }
+      h1 {
+        font-size: 22px;
+        margin: 0 0 6px;
+        color: #111;
+      }
+      p.sub {
+        color: #555;
+        margin: 0 0 24px;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      label {
+        display: block;
+        font-size: 13px;
+        color: #333;
+        margin-bottom: 6px;
+        font-weight: 600;
+      }
+      input[type="text"] {
+        width: 100%;
+        padding: 10px 12px;
+        font-size: 15px;
+        border: 1px solid #d0d7de;
+        border-radius: 8px;
+        box-sizing: border-box;
+        margin-bottom: 18px;
+        outline: none;
+      }
+      input[type="text"]:focus {
+        border-color: #0969da;
+        box-shadow: 0 0 0 3px rgba(9,105,218,0.15);
+      }
+      button {
+        width: 100%;
+        padding: 12px;
+        background: #0969da;
+        color: #fff;
+        border: 0;
+        border-radius: 8px;
+        font-size: 15px;
+        font-weight: 600;
+        cursor: pointer;
+      }
+      button:disabled { background: #9bb7dd; cursor: not-allowed; }
+      .status {
+        margin-top: 14px;
+        font-size: 13px;
+        color: #1a7f37;
+        min-height: 18px;
+      }
+      .status.error { color: #b42318; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Welcome — one-time setup</h1>
+      <p class="sub">
+        Enter your Email ID and Profile ID. These will be saved on this laptop
+        and attached to every scraped result. After saving, this window will
+        open Amazon so you can sign in and set your delivery pincode once.
+      </p>
+
+      <form id="setup-form" autocomplete="off">
+        <label for="emailId">Email ID</label>
+        <input type="text" id="emailId" name="emailId" placeholder="you@example.com" required />
+
+        <label for="profileId">Profile ID</label>
+        <input type="text" id="profileId" name="profileId" placeholder="e.g. PRF-123" required />
+
+        <button id="save-btn" type="submit">Save and continue</button>
+        <div class="status" id="status"></div>
+      </form>
+    </div>
+
+    <script>
+      const form = document.getElementById('setup-form');
+      const statusEl = document.getElementById('status');
+      const saveBtn = document.getElementById('save-btn');
+
+      form.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        const emailId = document.getElementById('emailId').value.trim();
+        const profileId = document.getElementById('profileId').value.trim();
+        if (!emailId || !profileId) return;
+
+        saveBtn.disabled = true;
+        statusEl.classList.remove('error');
+        statusEl.textContent = 'Saving...';
+
+        try {
+          await window.__saveUserSettings({ emailId, profileId });
+          statusEl.textContent = 'Saved. Opening Amazon — please sign in and set your delivery pincode.';
+        } catch (err) {
+          statusEl.classList.add('error');
+          statusEl.textContent = 'Failed to save: ' + (err && err.message ? err.message : String(err));
+          saveBtn.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>
