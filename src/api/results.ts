@@ -8,18 +8,16 @@ import { ScrapedResult } from '../types';
  */
 export async function postScrapedResult(result: ScrapedResult): Promise<void> {
   if (!config.resultsApiUrl) {
-    console.warn(
-      `[postScrapedResult] RESULTS_API_URL not set — logging payload instead. Query="${result.searchTerm}" products=${result.products.length}`,
+    throw new Error(
+      'RESULTS_API_URL is not set. Add it to your .env file.',
     );
-    console.log(JSON.stringify(result, null, 2));
-    return;
   }
 
   const res = await fetch(config.resultsApiUrl, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      ...(config.apiToken ? { Authorization: `Bearer ${config.apiToken}` } : {}),
+      Authorization: `Bearer ${config.apiToken}`,
     },
     body: JSON.stringify(result),
   });

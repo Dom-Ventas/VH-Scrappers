@@ -18,9 +18,9 @@ export const config = {
   resultsWaitTimeoutMs: 20_000,
   topNResults: 10,
   defaultAmazonDomain: process.env.DEFAULT_AMAZON_DOMAIN || 'www.amazon.in',
-  queriesApiUrl: process.env.QUERIES_API_URL || '',
-  resultsApiUrl: process.env.RESULTS_API_URL || '',
-  apiToken: process.env.API_TOKEN || '',
+  queriesApiUrl: process.env.QUERIES_API_URL || 'https://domventas.online/backend/api/v1/scrapper/queries',
+  resultsApiUrl: process.env.RESULTS_API_URL || 'https://domventas.online/backend/api/v1/scrapper/results',
+  apiToken: process.env.API_TOKEN || '3d6fb5dee0f184f17cc9dbca224f54bf46e7a474361a9f75bca56d34f7dd1df5',
   /**
    * Optional comma-separated list of marketplace short codes to scrape.
    * When set, queries from any other marketplace are skipped. Empty = all.

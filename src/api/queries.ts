@@ -21,9 +21,7 @@ export async function fetchQueries(profileId: string): Promise<Query[]> {
 
   const url = `${config.queriesApiUrl}?profile_id=${encodeURIComponent(profileId)}`;
   const res = await fetch(url, {
-    headers: config.apiToken
-      ? { Authorization: `Bearer ${config.apiToken}` }
-      : undefined,
+    headers: { Authorization: `Bearer ${config.apiToken}` },
   });
   if (!res.ok) {
     throw new Error(`fetchQueries ${res.status} ${res.statusText}`);

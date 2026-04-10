@@ -70,7 +70,9 @@ async function main(): Promise<void> {
         const label = `[${profileId}] [${i + 1}/${queries.length}] "${q.searchTerm}"`;
         try {
           const { url } = resolveMarketplace(q.shortCode);
-          const products = await scrapeSearchTerm(scrapePage, url, q.searchTerm);
+          const allProducts = await scrapeSearchTerm(scrapePage, url, q.searchTerm);
+          const sponsoredProducts = allProducts.filter((p) => p.isSponsored);
+          console.log(`[FILTER] ${label} -> ${sponsoredProducts.length}/${allProducts.length} sponsored`);
           await postScrapedResult({
             emailId: settings.emailId,
             profileId,
@@ -78,9 +80,9 @@ async function main(): Promise<void> {
             shortCode: q.shortCode,
             searchTerm: q.searchTerm,
             scrapedAt: new Date().toISOString(),
-            products,
+            products: sponsoredProducts,
           });
-          console.log(`[OK] ${label} -> ${products.length} products`);
+          console.log(`[OK] ${label} -> sent ${sponsoredProducts.length} sponsored products`);
         } catch (err) {
           console.error(`[FAIL] ${label}:`, err);
         }
