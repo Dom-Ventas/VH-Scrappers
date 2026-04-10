@@ -12,11 +12,20 @@ async function main(): Promise<void> {
   console.log(`[BOOT] profile dir: ${config.profileDir}`);
   console.log(`[BOOT] scrape delay: ${config.scrapeDelayMs}ms`);
 
-  const context = await openPersistentContext();
+  // Pre-load settings so we can decide whether the browser needs to be
+  // visible. First-run requires the user to interact with the form and to
+  // sign into Amazon, so it must be on-screen. Subsequent runs default to
+  // off-screen (background) so the user can keep working in other windows.
+  // BROWSER_VISIBLE=1 forces visible regardless (useful for debugging).
+  const existingSettings = loadUserSettings();
+  const visible = !existingSettings || process.env.BROWSER_VISIBLE === '1';
+  console.log(`[BOOT] browser window: ${visible ? 'visible' : 'off-screen'}`);
+
+  const context = await openPersistentContext({ visible });
   const page = await context.newPage();
 
   try {
-    let settings = loadUserSettings();
+    let settings = existingSettings;
     if (!settings) {
       settings = await runFirstLaunchFlow(page);
       // The first-run flow may close the page when the user closes the login tab.
