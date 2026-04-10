@@ -43,13 +43,20 @@ function startOfDay(d: Date): Date {
  * Parse Amazon's delivery text and return the number of days from `now`
  * to the earliest promised delivery date.
  *
- * Handles:
- *   "FREE delivery Today"                             -> 0
- *   "FREE delivery Tomorrow, 9 Apr"                   -> 1
- *   "FREE delivery Fri, 10 Apr"                       -> 2 (if today is 8 Apr)
- *   "FREE delivery 10 - 14 Apr"                       -> 2 (picks the start of the range)
- *   "FREE delivery Fri, 10 Apr\nOr fastest delivery Tomorrow, 9 Apr" -> 1 (earliest wins)
- *   "FREE delivery Mon, 13 Apr on first order"        -> 5
+ * Handles two date orderings:
+ *   day-month (amazon.in, .co.uk, .de, etc.):
+ *     "FREE delivery Today"                             -> 0
+ *     "FREE delivery Tomorrow, 9 Apr"                   -> 1
+ *     "FREE delivery Fri, 10 Apr"                       -> 2 (if today is 8 Apr)
+ *     "FREE delivery 10 - 14 Apr"                       -> 2 (picks start of range)
+ *     "FREE delivery Mon, 13 Apr on first order"        -> 5
+ *   month-day (amazon.com):
+ *     "FREE delivery Apr 15"                            -> N
+ *     "FREE delivery Wed, Apr 15"                       -> N
+ *     "FREE delivery Apr 15 - 17"                       -> N (picks start of range)
+ *
+ * Combined lines like "FREE delivery ... Or fastest delivery ..." pick the
+ * earliest of all parsed dates.
  *
  * Returns null if no parseable date is found.
  */
@@ -71,25 +78,29 @@ export function parseDeliveryDays(
     candidates.push(d);
   }
 
-  // Match "10 Apr" and "10 - 14 Apr" (start day of a range).
-  // The non-capturing "(?:\s*-\s*\d{1,2})?" consumes the end of a range so we
-  // don't also match "14 Apr" as a separate candidate.
-  const dateRe =
-    /(\d{1,2})(?:\s*-\s*\d{1,2})?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/gi;
-  let m: RegExpExecArray | null;
-  while ((m = dateRe.exec(text)) !== null) {
-    const day = parseInt(m[1], 10);
-    const monthIdx = MONTH_ABBRS.indexOf(m[2].toLowerCase());
-    if (day < 1 || day > 31 || monthIdx < 0) continue;
-
-    // Infer year: if the month has already passed this year (or is the current
-    // month but the day has already passed), the delivery is in the next year.
+  const pushDate = (day: number, monthIdx: number) => {
+    if (day < 1 || day > 31 || monthIdx < 0) return;
     let year = today.getFullYear();
     const tentative = new Date(year, monthIdx, day);
     if (tentative.getTime() < today.getTime() - 24 * 60 * 60 * 1000) {
       year += 1;
     }
     candidates.push(new Date(year, monthIdx, day));
+  };
+
+  // day-month order: "10 Apr", "10 - 14 Apr"
+  const dayMonthRe =
+    /(\d{1,2})(?:\s*-\s*\d{1,2})?\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)/gi;
+  let m: RegExpExecArray | null;
+  while ((m = dayMonthRe.exec(text)) !== null) {
+    pushDate(parseInt(m[1], 10), MONTH_ABBRS.indexOf(m[2].toLowerCase()));
+  }
+
+  // month-day order (amazon.com): "Apr 15", "Apr 15 - 17"
+  const monthDayRe =
+    /(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+(\d{1,2})(?:\s*-\s*\d{1,2})?/gi;
+  while ((m = monthDayRe.exec(text)) !== null) {
+    pushDate(parseInt(m[2], 10), MONTH_ABBRS.indexOf(m[1].toLowerCase()));
   }
 
   if (candidates.length === 0) return null;
