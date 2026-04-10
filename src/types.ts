@@ -30,6 +30,6 @@ export interface ScrapedResult {
 
 export interface UserSettings {
   emailId: string;
-  profileId: string;
+  profileIds: string[];
   firstRunCompletedAt: string;
 }

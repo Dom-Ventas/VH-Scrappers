@@ -8,11 +8,22 @@ export function loadUserSettings(): UserSettings | null {
   if (!fs.existsSync(filePath)) return null;
   try {
     const raw = fs.readFileSync(filePath, 'utf-8');
-    const parsed = JSON.parse(raw) as Partial<UserSettings>;
-    if (!parsed.emailId || !parsed.profileId) return null;
+    const parsed = JSON.parse(raw) as Partial<UserSettings> & { profileId?: string };
+    if (!parsed.emailId) return null;
+
+    // Support both the new `profileIds: string[]` shape and the legacy
+    // `profileId: string` shape so older settings files keep working.
+    let profileIds: string[] = [];
+    if (Array.isArray(parsed.profileIds)) {
+      profileIds = parsed.profileIds.map((p) => String(p).trim()).filter(Boolean);
+    } else if (typeof parsed.profileId === 'string' && parsed.profileId.trim()) {
+      profileIds = [parsed.profileId.trim()];
+    }
+    if (profileIds.length === 0) return null;
+
     return {
       emailId: parsed.emailId,
-      profileId: parsed.profileId,
+      profileIds,
       firstRunCompletedAt: parsed.firstRunCompletedAt || new Date().toISOString(),
     };
   } catch {

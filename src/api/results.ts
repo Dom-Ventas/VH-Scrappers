@@ -2,8 +2,9 @@ import { config } from '../config';
 import { ScrapedResult } from '../types';
 
 /**
- * POST a single scraped result (one query + up to 10 products) to the ventahub backend.
- * Requires RESULTS_API_URL and API_TOKEN to be set in the .env file.
+ * POST a single scraped result (one query + up to N products) to your backend.
+ * The body matches the ScrapedResult shape — backend should accept
+ * { emailId, profileId, queryId, shortCode, searchTerm, scrapedAt, products }.
  */
 export async function postScrapedResult(result: ScrapedResult): Promise<void> {
   if (!config.resultsApiUrl) {
@@ -20,9 +21,8 @@ export async function postScrapedResult(result: ScrapedResult): Promise<void> {
     },
     body: JSON.stringify(result),
   });
-
   if (!res.ok) {
-    const body = await res.text().catch(() => '');
-    throw new Error(`postScrapedResult failed: HTTP ${res.status} ${res.statusText} — ${body}`);
+    const text = await res.text().catch(() => '');
+    throw new Error(`postScrapedResult ${res.status} ${res.statusText} ${text}`);
   }
 }
