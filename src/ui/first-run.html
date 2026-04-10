@@ -41,7 +41,8 @@
         margin-bottom: 6px;
         font-weight: 600;
       }
-      input[type="text"] {
+      input[type="text"],
+      textarea {
         width: 100%;
         padding: 10px 12px;
         font-size: 15px;
@@ -50,10 +51,18 @@
         box-sizing: border-box;
         margin-bottom: 18px;
         outline: none;
+        font-family: inherit;
+        resize: vertical;
       }
-      input[type="text"]:focus {
+      input[type="text"]:focus,
+      textarea:focus {
         border-color: #0969da;
         box-shadow: 0 0 0 3px rgba(9,105,218,0.15);
+      }
+      .hint {
+        font-size: 12px;
+        color: #6b7280;
+        margin: -12px 0 14px;
       }
       button {
         width: 100%;
@@ -80,17 +89,19 @@
     <div class="card">
       <h1>Welcome — one-time setup</h1>
       <p class="sub">
-        Enter your Email ID and Profile ID. These will be saved on this laptop
-        and attached to every scraped result. After saving, this window will
-        open Amazon so you can sign in and set your delivery pincode once.
+        Enter your Email ID and one or more Profile IDs. These will be saved on
+        this laptop and attached to every scraped result. After saving, this
+        window will open Amazon so you can sign in and set your delivery pincode
+        once.
       </p>
 
       <form id="setup-form" autocomplete="off">
         <label for="emailId">Email ID</label>
         <input type="text" id="emailId" name="emailId" placeholder="you@example.com" required />
 
-        <label for="profileId">Profile ID</label>
-        <input type="text" id="profileId" name="profileId" placeholder="e.g. PRF-123" required />
+        <label for="profileIds">Profile IDs</label>
+        <textarea id="profileIds" name="profileIds" rows="4" placeholder="PRF-123&#10;PRF-456&#10;PRF-789" required></textarea>
+        <div class="hint">One Profile ID per line (commas also accepted).</div>
 
         <button id="save-btn" type="submit">Save and continue</button>
         <div class="status" id="status"></div>
@@ -105,16 +116,23 @@
       form.addEventListener('submit', async (ev) => {
         ev.preventDefault();
         const emailId = document.getElementById('emailId').value.trim();
-        const profileId = document.getElementById('profileId').value.trim();
-        if (!emailId || !profileId) return;
+        const profileIds = document.getElementById('profileIds').value
+          .split(/[\n,]+/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+        if (!emailId || profileIds.length === 0) {
+          statusEl.classList.add('error');
+          statusEl.textContent = 'Please enter an Email ID and at least one Profile ID.';
+          return;
+        }
 
         saveBtn.disabled = true;
         statusEl.classList.remove('error');
         statusEl.textContent = 'Saving...';
 
         try {
-          await window.__saveUserSettings({ emailId, profileId });
-          statusEl.textContent = 'Saved. Opening Amazon — please sign in and set your delivery pincode.';
+          await window.__saveUserSettings({ emailId, profileIds });
+          statusEl.textContent = 'Saved (' + profileIds.length + ' profile ID' + (profileIds.length === 1 ? '' : 's') + '). Opening Amazon — please sign in and set your delivery pincode.';
         } catch (err) {
           statusEl.classList.add('error');
           statusEl.textContent = 'Failed to save: ' + (err && err.message ? err.message : String(err));

@@ -1,6 +1,6 @@
 export interface Query {
   id: string;
-  domain: string;
+  shortCode: string;
   searchTerm: string;
 }
 
@@ -22,7 +22,7 @@ export interface ScrapedResult {
   emailId: string;
   profileId: string;
   queryId: string;
-  domain: string;
+  shortCode: string;
   searchTerm: string;
   scrapedAt: string;
   products: Product[];
@@ -30,6 +30,6 @@ export interface ScrapedResult {
 
 export interface UserSettings {
   emailId: string;
-  profileId: string;
+  profileIds: string[];
   firstRunCompletedAt: string;
 }

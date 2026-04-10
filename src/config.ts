@@ -21,6 +21,15 @@ export const config = {
   queriesApiUrl: process.env.QUERIES_API_URL || '',
   resultsApiUrl: process.env.RESULTS_API_URL || '',
   apiToken: process.env.API_TOKEN || '',
+  /**
+   * Optional comma-separated list of marketplace short codes to scrape.
+   * When set, queries from any other marketplace are skipped. Empty = all.
+   * Example: SCRAPE_SHORT_CODES=AZUS,AZUK
+   */
+  shortCodeFilter: (process.env.SCRAPE_SHORT_CODES || '')
+    .split(',')
+    .map((s) => s.trim().toUpperCase())
+    .filter(Boolean),
 };
 
 export function userSettingsPath(): string {

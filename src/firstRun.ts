@@ -19,15 +19,19 @@ function loadFirstRunHtml(): string {
     <h2>Search Term Scrapper — First Launch</h2>
     <form id="f">
       <p><label>Email ID <input id="emailId" required /></label></p>
-      <p><label>Profile ID <input id="profileId" required /></label></p>
+      <p><label>Profile IDs (one per line) <textarea id="profileIds" rows="4" required></textarea></label></p>
       <p><button type="submit">Save</button></p>
     </form>
     <script>
       document.getElementById('f').addEventListener('submit', async (e) => {
         e.preventDefault();
+        const profileIds = document.getElementById('profileIds').value
+          .split(/[\\n,]+/)
+          .map((s) => s.trim())
+          .filter(Boolean);
         await window.__saveUserSettings({
           emailId: document.getElementById('emailId').value.trim(),
-          profileId: document.getElementById('profileId').value.trim(),
+          profileIds,
         });
       });
     </script>
@@ -44,15 +48,22 @@ export async function runFirstLaunchFlow(page: Page): Promise<UserSettings> {
 
   await page.exposeFunction(
     '__saveUserSettings',
-    (data: { emailId: string; profileId: string }) => {
+    (data: { emailId: string; profileIds: string[] }) => {
+      const profileIds = (data.profileIds || [])
+        .map((p) => String(p).trim())
+        .filter(Boolean);
+      if (profileIds.length === 0) {
+        console.warn('[FIRST-RUN] No profile IDs provided — ignoring submission.');
+        return;
+      }
       const settings: UserSettings = {
         emailId: data.emailId,
-        profileId: data.profileId,
+        profileIds,
         firstRunCompletedAt: new Date().toISOString(),
       };
       saveUserSettings(settings);
       console.log(
-        `[FIRST-RUN] Settings saved: emailId="${settings.emailId}" profileId="${settings.profileId}"`,
+        `[FIRST-RUN] Settings saved: emailId="${settings.emailId}" profileIds=[${settings.profileIds.join(', ')}]`,
       );
       resolveSettings(settings);
     },
