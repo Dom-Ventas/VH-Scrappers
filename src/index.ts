@@ -5,6 +5,7 @@ import { runFirstLaunchFlow } from './firstRun';
 import { fetchQueries } from './api/queries';
 import { postScrapedResult } from './api/results';
 import { scrapeSearchTerm } from './scraper';
+import { resolveMarketplace } from './marketplaces';
 import { sleep } from './util';
 
 async function main(): Promise<void> {
@@ -31,19 +32,20 @@ async function main(): Promise<void> {
 
     const scrapePage = page.isClosed() ? await context.newPage() : page;
 
-    const queries = await fetchQueries();
+    const queries = await fetchQueries(settings.profileId);
     console.log(`[BOOT] ${queries.length} queries to scrape`);
 
     for (let i = 0; i < queries.length; i++) {
       const q = queries[i];
-      const label = `[${i + 1}/${queries.length}] "${q.searchTerm}"`;
+      const label = `[${i + 1}/${queries.length}] "${q.searchTerm}" (${q.shortCode})`;
       try {
-        const products = await scrapeSearchTerm(scrapePage, q.domain, q.searchTerm);
+        const marketplace = resolveMarketplace(q.shortCode);
+        const products = await scrapeSearchTerm(scrapePage, marketplace.url, q.searchTerm);
         await postScrapedResult({
           emailId: settings.emailId,
           profileId: settings.profileId,
           queryId: q.id,
-          domain: q.domain,
+          shortCode: q.shortCode,
           searchTerm: q.searchTerm,
           scrapedAt: new Date().toISOString(),
           products,
