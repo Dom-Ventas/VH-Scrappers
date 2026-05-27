@@ -71,8 +71,12 @@ async function main(): Promise<void> {
         try {
           const { url } = resolveMarketplace(q.shortCode);
           const allProducts = await scrapeSearchTerm(scrapePage, url, q.searchTerm);
-          const sponsoredProducts = allProducts.filter((p) => p.isSponsored);
-          console.log(`[FILTER] ${label} -> ${sponsoredProducts.length}/${allProducts.length} sponsored`);
+          const sponsoredCount = allProducts.filter((p) => p.isSponsored).length;
+          const organicCount = allProducts.length - sponsoredCount;
+          console.log(
+            `[FILTER] ${label} -> ${allProducts.length} total ` +
+              `(${sponsoredCount} sponsored, ${organicCount} organic)`,
+          );
           await postScrapedResult({
             emailId: settings.emailId,
             profileId,
@@ -80,9 +84,12 @@ async function main(): Promise<void> {
             shortCode: q.shortCode,
             searchTerm: q.searchTerm,
             scrapedAt: new Date().toISOString(),
-            products: sponsoredProducts,
+            products: allProducts,
           });
-          console.log(`[OK] ${label} -> sent ${sponsoredProducts.length} sponsored products`);
+          console.log(
+            `[OK] ${label} -> sent ${allProducts.length} products ` +
+              `(${sponsoredCount} sponsored + ${organicCount} organic)`,
+          );
         } catch (err) {
           console.error(`[FAIL] ${label}:`, err);
         }

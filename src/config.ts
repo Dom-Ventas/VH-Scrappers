@@ -16,7 +16,7 @@ export const config = {
   scrapeDelayMs: Number(process.env.SCRAPE_DELAY_MS || 30_000),
   navigationTimeoutMs: 30_000,
   resultsWaitTimeoutMs: 20_000,
-  topNResults: 10,
+  topNResults: 20,
   defaultAmazonDomain: process.env.DEFAULT_AMAZON_DOMAIN || 'www.amazon.in',
   queriesApiUrl: process.env.QUERIES_API_URL || 'https://domventas.online/backend/api/v1/scrapper/queries',
   resultsApiUrl: process.env.RESULTS_API_URL || 'https://domventas.online/backend/api/v1/scrapper/results',
