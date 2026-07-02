@@ -1,0 +1,76 @@
+name: Build Windows Agent
+
+# Builds the three Windows exes (launcher + both scrapers) and publishes them
+# as a downloadable GitHub Release. The scrapper token is baked into the
+# launcher exe from the SCRAPPER_API_TOKEN repo secret at build time, so the
+# released exe is self-contained — no .env needed on employee laptops.
+#
+# Run it: Actions tab -> "Build Windows Agent" -> Run workflow (pick a tag).
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag (e.g. agent-v1.0.0)'
+        required: true
+        default: 'agent-latest'
+
+permissions:
+  contents: write
+
+env:
+  # Runtime uses the system-installed Chrome; skip the heavy browser download.
+  PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build launcher (token baked from secret)
+        working-directory: ventahub-agent
+        env:
+          TOKEN: ${{ secrets.SCRAPPER_API_TOKEN }}
+        run: |
+          npm install --no-audit --no-fund
+          printf "export const EMBEDDED_TOKEN = '%s';\nexport const EMBEDDED_API_ROOT = 'https://domventas.online/backend';\n" "$TOKEN" > src/embedded.ts
+          npm run build:exe
+
+      - name: Build search-term scraper
+        working-directory: amazon-ads-scraper
+        run: |
+          npm install --no-audit --no-fund
+          npm run build:exe
+
+      - name: Build review scraper
+        working-directory: rating-scraper
+        run: |
+          npm install --no-audit --no-fund
+          npm run build:exe
+
+      - name: Collect release files
+        run: |
+          mkdir -p out
+          cp ventahub-agent/dist/VentaHubAgent.exe out/
+          cp amazon-ads-scraper/dist/search-term-scrapper.exe out/
+          cp rating-scraper/dist/AmazonReviewScrapper.exe out/
+          cp ventahub-agent/install/register-task.ps1 out/
+          ls -lh out
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          NOTES=$'Windows scraper agent bundle.\n\nSetup on a laptop:\n1. Copy ALL files into one folder (e.g. C:\\VentaHub).\n2. Double-click VentaHubAgent.exe once — enter email + AMS profile IDs, sign in to Amazon, close the tab.\n3. Right-click register-task.ps1 -> Run with PowerShell (registers the every-4-hours task).\n\nRequires Google Chrome installed. The token is baked into the exe; no .env needed.'
+          if gh release view "${{ inputs.release_tag }}" >/dev/null 2>&1; then
+            gh release upload "${{ inputs.release_tag }}" out/* --clobber
+          else
+            gh release create "${{ inputs.release_tag }}" out/* \
+              --title "VentaHub Agent ${{ inputs.release_tag }}" \
+              --notes "$NOTES"
+          fi

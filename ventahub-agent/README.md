@@ -36,21 +36,21 @@ Also build the scrapers (in their folders): `npm run build:exe`.
 
 ## Deploy to a laptop
 
+**Easiest: download the prebuilt bundle** from the repo's
+[Releases](../../releases) (produced by the *Build Windows Agent* workflow).
+Those exes have the token baked in — **no `.env` needed**.
+
 Put these together in one folder (e.g. `C:\VentaHub\`):
 
 ```
 VentaHubAgent.exe
 search-term-scrapper.exe
 AmazonReviewScrapper.exe
-.env                        <- create this, holds API_TOKEN (never committed)
 install\register-task.ps1
 ```
 
-Create `.env` next to the exe (copy `.env.example`) with the shared token:
-
-```
-API_TOKEN=<the SCRAPPER_API_TOKEN value>
-```
+> Only if you build **locally** (not from a Release), the exe has no token
+> baked in — add a `.env` next to it with `API_TOKEN=<token>` (see `.env.example`).
 
 Then on the laptop:
 
