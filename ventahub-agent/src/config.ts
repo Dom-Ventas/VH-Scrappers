@@ -1,6 +1,7 @@
 import * as path from 'path';
 import * as os from 'os';
 import * as dotenv from 'dotenv';
+import { EMBEDDED_API_ROOT, EMBEDDED_TOKEN } from './embedded';
 
 dotenv.config();
 
@@ -27,13 +28,10 @@ export const config = {
   navigationTimeoutMs: 30_000,
 
   // apiRoot = server root (the FastAPI app is mounted under root_path "/backend").
-  apiRoot: (process.env.VH_API_ROOT?.trim() || 'https://domventas.online/backend').replace(
-    /\/+$/,
-    '',
-  ),
-  // Never hard-code the token in source. Provide it via a .env next to the
-  // exe (see .env.example) or a real environment variable.
-  apiToken: process.env.API_TOKEN?.trim() || '',
+  apiRoot: (process.env.VH_API_ROOT?.trim() || EMBEDDED_API_ROOT).replace(/\/+$/, ''),
+  // Token resolution: runtime env (.env) first, else the value baked into the
+  // exe at build time (empty in source; injected by CI from a secret).
+  apiToken: process.env.API_TOKEN?.trim() || EMBEDDED_TOKEN,
 
   defaultAmazonDomain: process.env.DEFAULT_AMAZON_DOMAIN || 'www.amazon.in',
 
