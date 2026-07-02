@@ -71,8 +71,16 @@ async function main(): Promise<void> {
         try {
           const { url } = resolveMarketplace(q.shortCode);
           const allProducts = await scrapeSearchTerm(scrapePage, url, q.searchTerm);
-          const sponsoredProducts = allProducts.filter((p) => p.isSponsored);
-          console.log(`[FILTER] ${label} -> ${sponsoredProducts.length}/${allProducts.length} sponsored`);
+          // Backend wants up to 5 sponsored + 5 organic (schema caps at 10). It
+          // picks comp1..5 sponsored-first (backfilled with organic) and
+          // org1..5, so we send both buckets — not sponsored-only, which left
+          // the organic columns NULL and often failed the 5-competitor check.
+          const sponsored = allProducts.filter((pr) => pr.isSponsored).slice(0, 5);
+          const organic = allProducts.filter((pr) => !pr.isSponsored).slice(0, 5);
+          const products = [...sponsored, ...organic];
+          console.log(
+            `[FILTER] ${label} -> sending ${sponsored.length} sponsored + ${organic.length} organic (of ${allProducts.length} scraped)`,
+          );
           await postScrapedResult({
             emailId: settings.emailId,
             profileId,
@@ -80,9 +88,11 @@ async function main(): Promise<void> {
             shortCode: q.shortCode,
             searchTerm: q.searchTerm,
             scrapedAt: new Date().toISOString(),
-            products: sponsoredProducts,
+            products,
           });
-          console.log(`[OK] ${label} -> sent ${sponsoredProducts.length} sponsored products`);
+          console.log(
+            `[OK] ${label} -> sent ${products.length} products (${sponsored.length} sponsored + ${organic.length} organic)`,
+          );
         } catch (err) {
           console.error(`[FAIL] ${label}:`, err);
         }

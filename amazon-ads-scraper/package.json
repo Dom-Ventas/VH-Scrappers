@@ -1,6 +1,6 @@
 {
   "name": "search-term-scrapper",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Amazon search term scraper (TypeScript + Playwright) with persistent Chrome profile and single-exe packaging.",
   "main": "dist/index.js",
   "bin": "dist/index.js",
