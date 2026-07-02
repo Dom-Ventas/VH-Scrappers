@@ -1,0 +1,40 @@
+{
+  "name": "amazon-review-scraper",
+  "version": "1.0.0",
+  "description": "Amazon Review Scraper",
+
+  "main": "dist/index.js",
+  "bin": "dist/index.js",
+
+  "scripts": {
+    "clean": "rimraf dist/AmazonReviewScrapper.exe",
+    "build": "tsc",
+    "build:exe": "npm run build && pkg dist/index.js --targets node20-win-x64 --output dist/AmazonReviewScrapper.exe",
+    "dev": "ts-node src/index.ts"
+  },
+
+  "dependencies": {
+    "dotenv": "^16.5.0",
+    "express": "^5.2.1",
+    "playwright": "1.53.0"
+  },
+
+  "devDependencies": {
+    "@types/node": "^24.13.2",
+    "@yao-pkg/pkg": "^5.16.1",
+    "rimraf": "^6.0.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
+  },
+
+  "pkg": {
+    "assets": [
+      "node_modules/playwright-core/**/*",
+      "node_modules/playwright/**/*",
+      "src/ui/**/*"
+    ],
+    "targets": [
+      "node20-win-x64"
+    ]
+  }
+}
