@@ -4,7 +4,8 @@ import { config } from './config';
 
 import {
   extractProductDetails,
-  extractCriticalReviews
+  extractCriticalReviews,
+  extractDeliveryPromise
 } from './extractors';
 
 import {
@@ -23,6 +24,105 @@ function buildProductUrl(
       .replace(/\/$/, '');
 
   return `https://${cleanDomain}/dp/${asin}`;
+}
+
+export async function checkAplusContent(
+  page: Page,
+  domain?: string,
+  asin?: string
+): Promise<"yes" | "no"> {
+
+  // 1. Cookie Modal Dismissal (non-blocking)
+  try {
+    const cookieBtn = page.locator('#sp-cc-accept, input#sp-cc-accept, button[id*="accept"]');
+    if (await cookieBtn.first().isVisible().catch(() => false)) {
+      await cookieBtn.first().click().catch(() => {});
+      await page.waitForTimeout(300);
+    }
+  } catch {}
+
+  // 2. Direct CDP Protocol HTML Check (Works 100% identically in VS Code & compiled .exe binary)
+  try {
+    const fullHtml = await page.content();
+    if (
+      fullHtml.includes('aplus-media-library-service-media') ||
+      fullHtml.includes('class="aplus-v2') ||
+      fullHtml.includes('class="aplus-module') ||
+      fullHtml.includes('class="premium-aplus') ||
+      fullHtml.includes('aplus-brand-story') ||
+      fullHtml.includes('data-aplus-module')
+    ) {
+      console.log('[A+ CHECK] Detected active A+ content via page.content()');
+      return "yes";
+    }
+  } catch {}
+
+  // 3. Multi-step scroll + lazy-loading triggers to force IntersectionObserver hydration across all marketplaces
+  try {
+    await page.evaluate(async () => {
+      const positions = [1500, 3500, 5500];
+      for (const pos of positions) {
+        window.scrollTo(0, pos);
+        await new Promise((r) => setTimeout(r, 250));
+      }
+
+      // Force lazy loading hydration for offscreen images & A+ containers
+      const lazyEls = document.querySelectorAll('img[data-src], img[loading="lazy"], .aplus-v2, #aplus_feature_div, [data-cel-widget*="aplus"]');
+      lazyEls.forEach((el) => {
+        void el.getBoundingClientRect();
+        el.dispatchEvent(new Event('scroll', { bubbles: true }));
+      });
+      window.dispatchEvent(new Event('scroll'));
+    }).catch(() => {});
+    await page.waitForTimeout(1000);
+  } catch {}
+
+  // 4. In-Browser DOM Evaluation (checks active A+ modules, images, and content)
+  try {
+    const hasAplus = await page.evaluate(() => {
+      const selectors = [
+        '#aplus', '#aplus3p_feature_div', '#aplus_feature_div',
+        '#dpx-aplus-product-description_feature_div', '#aplus_v2_feature_div',
+        '#premium-aplus-content', '#premiumAplus_feature_div', '#premium-aplus',
+        '#aplusBrandStory_feature_div', '#brandStory_feature_div', '#brandStory',
+        '#aplusSustainabilityStory_feature_div', '#psxElevatedAplusContainer',
+        '#fromTheManufacturer_feature_div', '#fromTheManufacturer',
+        '#manufacturerDescription_feature_div', '#manufacturerContent',
+        '.aplus-v2', '.aplus-module',
+        '.premium-aplus', '.premium-aplus-module', '.aplus-brand-story-card',
+        '.aplus-brand-story-wrapper', '[data-cel-widget*="aplus"]',
+        '[data-cel-widget*="manufacturer"]', '[data-cel-widget*="brandStory"]',
+        '[data-feature-name="aplus"]', '[data-feature-name="aplusBrandStory"]',
+        '[data-feature-name="brandStory"]', '[data-feature-name="fromTheManufacturer"]',
+        '[data-feature-name*="aplus"]', '[data-feature-name*="manufacturer"]',
+        'iframe[id*="aplus"]', 'iframe[src*="aplus"]'
+      ];
+
+      for (const sel of selectors) {
+        const nodes = document.querySelectorAll(sel);
+        for (let i = 0; i < nodes.length; i++) {
+          const node = nodes[i];
+          const text = (node.textContent || '').trim();
+          const hasImages = node.querySelectorAll('img').length > 0;
+          const hasModules = node.querySelectorAll('.aplus-module, .aplus-v2, .premium-aplus, img, p, table, iframe').length > 0;
+          if (hasImages || hasModules || text.length > 50) {
+            return true;
+          }
+        }
+      }
+
+      return false;
+    }).catch(() => false);
+
+    if (hasAplus) {
+      console.log('[A+ CHECK] Detected active A+ content modules');
+      return "yes";
+    }
+  } catch (err) {
+    console.error('[A+ CHECK ERROR]', err);
+  }
+
+  return "no";
 }
 
 export async function scrapeAsin(
@@ -92,6 +192,36 @@ export async function scrapeAsin(
       page,
       asin
     );
+
+  // Wait for full page load so lazy-loaded A+ content sections render into DOM
+  try {
+    await page.waitForLoadState('networkidle', { timeout: 8000 });
+  } catch {
+    // networkidle may timeout on heavy pages — that's fine, continue
+  }
+
+  // Delivery promise is read before the A+ check, which scrolls the page.
+  try {
+    const delivery = await extractDeliveryPromise(page);
+
+    // Whole number of days when a promise is shown, null when the page has
+    // none (out of stock, no offer) — so 0 stays reserved for same-day.
+    product.deliveryPromiseDays = delivery.days;
+    product.deliveryText = delivery.text;
+  } catch (err) {
+    console.warn('[DELIVERY] Failed to read delivery promise', err);
+    product.deliveryPromiseDays = null;
+    product.deliveryText = '';
+  }
+
+  console.log(
+    `[DELIVERY PROMISE] ${asin} -> ${product.deliveryPromiseDays} day(s)`
+  );
+
+  const aplusStatus = await checkAplusContent(page, domain, asin);
+  console.log(`[A+ CONTENT] ${asin} -> ${aplusStatus}`);
+  product.aplus_content = aplusStatus;
+  product.aplusContent = aplusStatus;
 
   const criticalReviews: Review[] =
     [];

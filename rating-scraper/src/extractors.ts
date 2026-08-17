@@ -11,6 +11,8 @@ import {
   Review
 } from './types';
 
+import { parseDeliveryPromiseDays } from './delivery';
+
 export const SELECTORS = {
 
   title: [
@@ -66,6 +68,20 @@ export const SELECTORS = {
 
   reviewDate: [
     '[data-hook="review-date"]'
+  ],
+
+  // Delivery promise block on the product page. Ordered most-specific first —
+  // the PRIMARY slot holds the standard (free) delivery promise, while the
+  // SECONDARY slot holds "Or fastest delivery ...".
+  deliveryBlock: [
+    '#mir-layout-DELIVERY_BLOCK-slot-PRIMARY_DELIVERY_MESSAGE_LARGE',
+    '#deliveryBlockMessage',
+    '#delivery-block-message',
+    '#ddmDeliveryMessage',
+    '#mir-layout-DELIVERY_BLOCK',
+    '#fast-track-message',
+    '#exports_desktop_qualifiedBuybox_tlc_feature_div',
+    '#amazonGlobal_feature_div'
   ]
 };
 
@@ -235,6 +251,69 @@ export async function extractProductDetails(
 
     criticalReviews: []
   };
+}
+
+/**
+ * Reads the delivery promise off the product page and converts it into a day
+ * count relative to today (promise date - today).
+ *
+ * Returns { days: null } when the page shows no readable delivery promise
+ * (out of stock, seller-fulfilled with no date, delivery block not rendered).
+ */
+export async function extractDeliveryPromise(
+  page: Page
+): Promise<{ days: number | null; text: string }> {
+
+  let deliveryText = '';
+
+  // 1. Amazon exposes the promise as a clean attribute on the delivery slot,
+  //    e.g. data-csa-c-delivery-time="Thursday, August 21". First match in DOM
+  //    order is the standard promise; "fastest delivery" comes after it.
+  try {
+    deliveryText =
+      (await page
+        .locator('[data-csa-c-delivery-time]')
+        .first()
+        .getAttribute('data-csa-c-delivery-time')) || '';
+  } catch {}
+
+  // 2. Fall back to the rendered text of the delivery block.
+  if (!deliveryText) {
+    deliveryText =
+      (await firstInnerText(
+        page,
+        SELECTORS.deliveryBlock
+      )) ||
+      (await firstText(
+        page,
+        SELECTORS.deliveryBlock
+      )) ||
+      '';
+  }
+
+  deliveryText = normalizeText(deliveryText);
+
+  if (!deliveryText) {
+    console.log('[DELIVERY] No delivery block found on page');
+    return { days: null, text: '' };
+  }
+
+  // Only look at the first line — the block often stacks the standard promise,
+  // the fastest promise and the shipping location in one node.
+  const primaryLine =
+    deliveryText
+      .split(/\.\s|\s{2,}|\bOr\b/)[0]
+      .trim() || deliveryText;
+
+  const days =
+    parseDeliveryPromiseDays(primaryLine) ??
+    parseDeliveryPromiseDays(deliveryText);
+
+  console.log(
+    `[DELIVERY] "${deliveryText}" -> ${days === null ? 'unparsed' : `${days} day(s)`}`
+  );
+
+  return { days, text: deliveryText };
 }
 
 export async function extractCriticalReviews(

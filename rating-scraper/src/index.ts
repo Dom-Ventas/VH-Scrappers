@@ -17,7 +17,7 @@ if (
 // ──────────────────────────────────────────────────────────────────────────────
 
 import { openPersistentContext } from './browser';
-import { config } from './config';
+import { config, envFilesLoaded } from './config';
 import { loadUserSettings } from './userSettings';
 import { runFirstLaunchFlow } from './firstRun';
 
@@ -31,6 +31,14 @@ import { resolveMarketplace } from './marketplaces';
 import { sleep } from './util';
 
 async function main() {
+
+  console.log(
+    `[BOOT] env file(s): ${
+      envFilesLoaded.length
+        ? envFilesLoaded.join(', ')
+        : 'none found — using built-in defaults'
+    }`
+  );
 
   console.log(
     `[BOOT] profile dir: ${config.profileDir}`
@@ -185,7 +193,7 @@ async function main() {
             );
 
           console.log(
-            `[FILTER] ${label} -> ${product.criticalReviews?.length || 0} critical reviews`
+            `[FILTER] ${label} -> ${product.criticalReviews?.length || 0} critical reviews | A+ Content: ${product.aplus_content} | Delivery Promise: ${product.deliveryPromiseDays ?? 'null'} day(s)`
           );
 
           await postScrapedResult({
@@ -204,9 +212,19 @@ async function main() {
             ratingCount: product.totalRatings,
 
             criticalReviews: {
-    reviews: product.criticalReviews ?? []
-}
-});
+              reviews: product.criticalReviews ?? []
+            },
+
+            aplus_content: product.aplus_content || "no",
+
+            aplusContent: product.aplusContent || "no",
+
+            delivery_promise_days:
+              product.deliveryPromiseDays ?? null,
+
+            deliveryPromiseDays:
+              product.deliveryPromiseDays ?? null
+          });
 
           console.log(
             `[OK] ${label} -> sent successfully`

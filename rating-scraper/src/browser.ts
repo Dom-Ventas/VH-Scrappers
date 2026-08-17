@@ -37,8 +37,13 @@ export async function openPersistentContext(
           '--window-size=1920,1080'
         ];
 
-  const context =
-    await chromium.launchPersistentContext(
+  const desktopUserAgent =
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+  let context: BrowserContext;
+
+  try {
+    context = await chromium.launchPersistentContext(
       config.profileDir,
       {
         headless: !visible,
@@ -46,7 +51,9 @@ export async function openPersistentContext(
         channel:
           config.chromeChannel,
 
-        viewport: null,
+        viewport: { width: 1920, height: 1080 },
+
+        userAgent: desktopUserAgent,
 
         args: [
           ...windowArgs,
@@ -54,6 +61,24 @@ export async function openPersistentContext(
         ]
       }
     );
+  } catch (err) {
+    console.log('[BROWSER] System Chrome channel launch failed, using bundled browser fallback...');
+    context = await chromium.launchPersistentContext(
+      config.profileDir,
+      {
+        headless: !visible,
+
+        viewport: { width: 1920, height: 1080 },
+
+        userAgent: desktopUserAgent,
+
+        args: [
+          ...windowArgs,
+          '--disable-blink-features=AutomationControlled'
+        ]
+      }
+    );
+  }
 
   context.setDefaultNavigationTimeout(
     config.navigationTimeoutMs

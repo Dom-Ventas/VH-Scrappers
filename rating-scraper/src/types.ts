@@ -19,6 +19,12 @@ export interface ProductReviewResult {
   totalRatings: number;
   bestSellersRank?: string;
   criticalReviews?: Review[];
+  aplus_content?: "yes" | "no";
+  aplusContent?: "yes" | "no";
+  /** Promised delivery date minus today, in whole days. null when not readable. */
+  deliveryPromiseDays?: number | null;
+  /** Raw delivery text the day count was parsed from (logging/debug only). */
+  deliveryText?: string;
 }
 
 export interface ScrapedResult {
@@ -30,6 +36,11 @@ export interface ScrapedResult {
   rating: number;
   ratingCount: number;
   criticalReviews: Record<string, any>;
+  aplus_content?: "yes" | "no";
+  aplusContent?: "yes" | "no";
+  /** Promised delivery date minus today, in whole days. null when not readable. */
+  delivery_promise_days?: number | null;
+  deliveryPromiseDays?: number | null;
 }
 
 export interface UserSettings {
