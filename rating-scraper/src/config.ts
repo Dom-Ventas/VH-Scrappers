@@ -83,15 +83,15 @@ export const config = {
 
   queriesApiUrl:
     process.env.QUERIES_API_URL ||
-    'https://domventas.online/backend/api/v1/scrapper/review-queries',
+    'https://domventas.info/backend/api/v1/scrapper/review-queries',
 
   resultsApiUrl:
     process.env.RESULTS_API_URL ||
-    'https://domventas.online/backend/api/v1/scrapper/reviews',
+    'https://domventas.info/backend/api/v1/scrapper/reviews',
 
   apiToken:
     process.env.API_TOKEN ||
-    '3d6fb5dee0f184f17cc9dbca224f54bf46e7a474361a9f75bca56d34f7dd1df5',
+    '',
 
   shortCodeFilter: (
     process.env.SCRAPE_SHORT_CODES || ''

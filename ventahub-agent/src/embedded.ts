@@ -8,4 +8,4 @@
 //
 // For LOCAL builds this stays empty — provide API_TOKEN via a .env instead.
 export const EMBEDDED_TOKEN = '';
-export const EMBEDDED_API_ROOT = 'https://domventas.online/backend';
+export const EMBEDDED_API_ROOT = 'https://domventas.info/backend';
