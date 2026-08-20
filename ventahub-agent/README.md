@@ -69,7 +69,7 @@ Set via a `.env` next to the exe or environment variables (see `.env.example`):
 | var | default | purpose |
 |-----|---------|---------|
 | `API_TOKEN` | **required** | static scrapper Bearer token (never hard-coded in source) |
-| `VH_API_ROOT` | `https://domventas.online/backend` | VentaHub server root |
+| `VH_API_ROOT` | `https://domventas.info/backend` | VentaHub server root |
 | `DEFAULT_AMAZON_DOMAIN` | `www.amazon.in` | domain for first-run login |
 | `BROWSER_VISIBLE` | `0` | `1` = show child browser (debug) |
 | `VH_SCRAPER_DIR` | agent exe's folder | where the scraper exes live |

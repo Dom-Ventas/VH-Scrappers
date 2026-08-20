@@ -38,7 +38,7 @@ jobs:
           TOKEN: ${{ secrets.SCRAPPER_API_TOKEN }}
         run: |
           npm install --no-audit --no-fund
-          printf "export const EMBEDDED_TOKEN = '%s';\nexport const EMBEDDED_API_ROOT = 'https://domventas.online/backend';\n" "$TOKEN" > src/embedded.ts
+          printf "export const EMBEDDED_TOKEN = '%s';\nexport const EMBEDDED_API_ROOT = 'https://domventas.info/backend';\n" "$TOKEN" > src/embedded.ts
           npm run build:exe
 
       - name: Build search-term scraper
