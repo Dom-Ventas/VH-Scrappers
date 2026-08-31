@@ -1,0 +1,35 @@
+{
+  "name": "flipkart-review-scraper",
+  "version": "1.0.0",
+  "description": "Flipkart Review Scraper",
+  "main": "dist/index.js",
+  "bin": "dist/index.js",
+  "scripts": {
+    "clean": "rimraf dist/FlipkartReviewScrapper.exe",
+    "build": "tsc",
+    "build:exe": "npm run build && pkg dist/index.js --targets node20-win-x64 --output dist/FlipkartReviewScrapper.exe",
+    "dev": "ts-node src/index.ts",
+    "setup": "ts-node src/index.ts --setup",
+    "test": "ts-node test/reviewParser.test.ts"
+  },
+  "dependencies": {
+    "dotenv": "^16.5.0",
+    "playwright": "1.53.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.2",
+    "@yao-pkg/pkg": "^5.16.1",
+    "rimraf": "^6.0.1",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.3"
+  },
+  "pkg": {
+    "assets": [
+      "node_modules/playwright-core/**/*",
+      "node_modules/playwright/**/*"
+    ],
+    "targets": [
+      "node20-win-x64"
+    ]
+  }
+}

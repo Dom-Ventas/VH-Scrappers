@@ -1,0 +1,27 @@
+{
+  "name": "noon-review-scraper",
+  "version": "1.0.0",
+  "description": "Noon Review Scraper",
+  "author": "Dom Ventas",
+  "license": "ISC",
+  "main": "dist/index.js",
+  "scripts": {
+    "mock": "tsx mock-server/server.ts",
+    "dev": "tsx src/index.ts",
+    "start": "tsx src/index.ts",
+    "build": "tsc",
+    "clean": "rimraf dist"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.1",
+    "express": "^5.2.1",
+    "playwright": "^1.62.1"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^24.0.15",
+    "rimraf": "^6.0.1",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  }
+}

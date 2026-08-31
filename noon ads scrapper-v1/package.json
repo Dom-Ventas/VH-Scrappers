@@ -1,0 +1,35 @@
+{
+  "name": "noon-search-term-scrapper",
+  "version": "0.2.0",
+  "description": "Noon search term scraper (TypeScript + Playwright) with persistent Chrome profile and single-exe packaging.",
+  "main": "dist/index.js",
+  "bin": "dist/index.js",
+  "scripts": {
+    "dev": "tsx src/index.ts",
+    "mock": "tsx mock/server.ts",
+    "dev-api": "tsx scripts/dev-api.ts",
+    "build": "tsc",
+    "build:exe": "tsc && pkg dist/index.js --targets node20-win-x64 --output dist/noon-search-term-scrapper.exe",
+    "test": "playwright test"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "playwright": "^1.47.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.47.0",
+    "@types/node": "^20.12.12",
+    "@yao-pkg/pkg": "^5.16.1",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.2"
+  },
+  "pkg": {
+    "assets": [
+      "node_modules/playwright-core/**/*",
+      "src/ui/first-run.html"
+    ],
+    "targets": [
+      "node20-win-x64"
+    ]
+  }
+}
