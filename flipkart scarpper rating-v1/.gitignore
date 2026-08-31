@@ -1,0 +1,9 @@
+node_modules/
+dist/
+chrome-profile/
+test-profile/
+results/
+.env
+queries.json
+.DS_Store
+*.log

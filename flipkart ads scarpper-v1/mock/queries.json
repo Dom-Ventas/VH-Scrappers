@@ -1,0 +1,9 @@
+{
+  "1234567": [
+    { "id": "q-1001", "short_code": "FKIN", "keyword": "bluetooth headphones" },
+    { "id": "q-1002", "short_code": "FKIN", "keyword": "running shoes" },
+    { "id": "q-1003", "short_code": "FKIN", "keyword": "smart watches" },
+    { "id": "q-1004", "short_code": "FKIN", "keyword": "boat ear buds" },
+    { "id": "q-1005", "short_code": "FKIN", "keyword": "laptop" }
+  ]
+}

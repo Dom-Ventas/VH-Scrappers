@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Noon Search Term Scrapper — First Launch Setup</title>
+    <style>
+      :root { color-scheme: light; }
+      body {
+        font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+        background: #f6f8fa;
+        margin: 0;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 100vh;
+      }
+      .card {
+        background: #fff;
+        max-width: 480px;
+        width: 90%;
+        padding: 32px 36px;
+        border-radius: 12px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.08);
+      }
+      h1 {
+        font-size: 22px;
+        margin: 0 0 6px;
+        color: #111;
+      }
+      p.sub {
+        color: #555;
+        margin: 0 0 24px;
+        font-size: 14px;
+        line-height: 1.5;
+      }
+      label {
+        display: block;
+        font-size: 13px;
+        color: #333;
+        margin-bottom: 6px;
+        font-weight: 600;
+      }
+      input[type="text"],
+      textarea {
+        width: 100%;
+        padding: 10px 12px;
+        font-size: 15px;
+        border: 1px solid #d0d7de;
+        border-radius: 8px;
+        box-sizing: border-box;
+        margin-bottom: 18px;
+        outline: none;
+        font-family: inherit;
+        resize: vertical;
+      }
+      input[type="text"]:focus,
+      textarea:focus {
+        border-color: #4c4c4c;
+        box-shadow: 0 0 0 3px rgba(254,238,0,0.55);
+      }
+      .hint {
+        font-size: 12px;
+        color: #6b7280;
+        margin: -12px 0 14px;
+      }
+      button {
+        width: 100%;
+        padding: 12px;
+        background: #feee00;
+        color: #404553;
+        border: 0;
+        border-radius: 8px;
+        font-size: 15px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      button:disabled { background: #f7f3b8; color: #9096a5; cursor: not-allowed; }
+      .status {
+        margin-top: 14px;
+        font-size: 13px;
+        color: #1a7f37;
+        min-height: 18px;
+      }
+      .status.error { color: #b42318; }
+    </style>
+  </head>
+  <body>
+    <div class="card">
+      <h1>Welcome — one-time setup</h1>
+      <p class="sub">
+        Enter your Email ID and one or more Profile IDs. These will be saved on
+        this laptop and attached to every scraped result. After saving, this
+        window will open noon so you can sign in and set your delivery address
+        once.
+      </p>
+
+      <form id="setup-form" autocomplete="off">
+        <label for="emailId">Email ID</label>
+        <input type="text" id="emailId" name="emailId" placeholder="you@example.com" required />
+
+        <label for="profileIds">Profile IDs</label>
+        <textarea id="profileIds" name="profileIds" rows="4" placeholder="PRF-123&#10;PRF-456&#10;PRF-789" required></textarea>
+        <div class="hint">One Profile ID per line (commas also accepted).</div>
+
+        <button id="save-btn" type="submit">Save and continue</button>
+        <div class="status" id="status"></div>
+      </form>
+    </div>
+
+    <script>
+      const form = document.getElementById('setup-form');
+      const statusEl = document.getElementById('status');
+      const saveBtn = document.getElementById('save-btn');
+
+      form.addEventListener('submit', async (ev) => {
+        ev.preventDefault();
+        const emailId = document.getElementById('emailId').value.trim();
+        const profileIds = document.getElementById('profileIds').value
+          .split(/[\n,]+/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+        if (!emailId || profileIds.length === 0) {
+          statusEl.classList.add('error');
+          statusEl.textContent = 'Please enter an Email ID and at least one Profile ID.';
+          return;
+        }
+
+        saveBtn.disabled = true;
+        statusEl.classList.remove('error');
+        statusEl.textContent = 'Saving...';
+
+        try {
+          await window.__saveUserSettings({ emailId, profileIds });
+          statusEl.textContent = 'Saved (' + profileIds.length + ' profile ID' + (profileIds.length === 1 ? '' : 's') + '). Opening noon — please sign in and set your delivery address.';
+        } catch (err) {
+          statusEl.classList.add('error');
+          statusEl.textContent = 'Failed to save: ' + (err && err.message ? err.message : String(err));
+          saveBtn.disabled = false;
+        }
+      });
+    </script>
+  </body>
+</html>

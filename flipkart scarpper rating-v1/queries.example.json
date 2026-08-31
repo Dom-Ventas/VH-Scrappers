@@ -1,0 +1,15 @@
+{
+  "_comment": [
+    "Local work list, used while the backend API is pending.",
+    "Copy this to queries.json. Keys are profile IDs, matching the profileIds",
+    "entered during first run. Setting QUERIES_API_URL in .env makes this file",
+    "unused — no code change needed.",
+    "pid is the Flipkart PID, the ASIN equivalent. Find it in any product URL:",
+    "https://www.flipkart.com/...?pid=ACCGJP5QSJFP7HAP"
+  ],
+
+  "default": [
+    { "productId": 101, "pid": "TVSHBYPVRKUVGNGM", "shortCode": "FKIN" },
+    { "productId": 102, "pid": "ACCGJP5QSJFP7HAP", "shortCode": "FKIN" }
+  ]
+}
