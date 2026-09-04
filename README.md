@@ -121,8 +121,8 @@ a staging backend.
 
 ### Release builds — the token comes from a GitHub secret
 
-`ventahub-agent/src/embedded.ts` is committed with an **empty** token on
-purpose:
+Every package — the agent **and all six scrapers** — has a `src/embedded.ts`
+committed with an **empty** token on purpose:
 
 ```ts
 export const EMBEDDED_TOKEN = '';
@@ -130,11 +130,21 @@ export const EMBEDDED_API_ROOT = 'https://domventas.info/backend';
 export const EMBEDDED_AGENT_KIND = 'amazon';
 ```
 
-CI rewrites `EMBEDDED_TOKEN` from the `SCRAPPER_API_TOKEN` repo secret just
-before packaging, so released exes are self-contained while the token never
-enters source control.
+CI rewrites `EMBEDDED_TOKEN` in each package from the `SCRAPPER_API_TOKEN` repo
+secret just before packaging, so all nine released exes are self-contained while
+the token never enters source control. The build fails loudly if injection
+doesn't take.
 
-> **Never commit a real token to `embedded.ts`.** If you paste one in to test a
+`EMBEDDED_API_ROOT` is **not** injected — it is committed, so changing the
+backend host is a code change and a merge, not a workflow input. Each scraper
+also commits its own `QUERY_ENDPOINT` / `RESULTS_ENDPOINT` paths.
+
+Precedence at runtime is always: **environment > baked-in**. When the agent
+launches a scraper it sets `QUERIES_API_URL`, `RESULTS_API_URL` and `API_TOKEN`
+from the backend's assignment, and those win. The baked values are the fallback
+that makes a scraper exe work when run on its own.
+
+> **Never commit a real token to any `embedded.ts`.** If you paste one in to test a
 > local build, revert the line before committing:
 > `git checkout -- ventahub-agent/src/embedded.ts`.
 > The file is tracked, so a careless `git add -A` puts the token in history

@@ -1,6 +1,12 @@
 import * as path from 'path';
 import * as os from 'os';
 import * as dotenv from 'dotenv';
+import {
+  EMBEDDED_API_ROOT,
+  EMBEDDED_TOKEN,
+  QUERY_ENDPOINT,
+  RESULTS_ENDPOINT,
+} from './embedded';
 
 dotenv.config();
 
@@ -10,6 +16,11 @@ function defaultProfileDir(): string {
   return path.join(localAppData, 'FlipkartSearchTermScrapper', 'chrome-profile');
 }
 
+// API root: env override first (lets a built exe be pointed at staging via a
+// .env), else the value baked in at build time. Trailing slashes stripped so
+// joining an endpoint never produces a double slash.
+const API_ROOT = (process.env.VH_API_ROOT?.trim() || EMBEDDED_API_ROOT).replace(/\/+$/, '');
+
 export const config = {
   profileDir: process.env.SCRAPER_PROFILE_DIR?.trim() || defaultProfileDir(),
   chromeChannel: 'chrome' as const,
@@ -18,12 +29,12 @@ export const config = {
   resultsWaitTimeoutMs: 20_000,
   topNResults: 20,
   defaultFlipkartDomain: process.env.DEFAULT_FLIPKART_DOMAIN || 'www.flipkart.com',
-  // Endpoints intentionally left blank for now — fill these in via .env once the
-  // backend routes are ready. See src/api/queries.ts and src/api/results.ts for
-  // the fallback behaviour when they are empty.
-  queriesApiUrl: process.env.QUERIES_API_URL || '',
-  resultsApiUrl: process.env.RESULTS_API_URL || '',
-  apiToken: process.env.API_TOKEN || '',
+  // Defaults come from src/embedded.ts (API root + endpoint paths). The agent
+  // overrides both from the backend's assignment when it launches this scraper;
+  // these are the fallback for a standalone run.
+  queriesApiUrl: process.env.QUERIES_API_URL || `${API_ROOT}${QUERY_ENDPOINT}`,
+  resultsApiUrl: process.env.RESULTS_API_URL || `${API_ROOT}${RESULTS_ENDPOINT}`,
+  apiToken: process.env.API_TOKEN || EMBEDDED_TOKEN,
   /**
    * Optional comma-separated list of marketplace short codes to scrape.
    * When set, queries from any other marketplace are skipped. Empty = all.

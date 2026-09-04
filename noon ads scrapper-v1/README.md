@@ -35,9 +35,9 @@ storefront for a one-time sign-in.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `QUERIES_API_URL` | *(empty)* | Where to fetch search terms |
-| `RESULTS_API_URL` | *(empty)* | Where to post results |
-| `API_TOKEN` | — | Bearer token; must match the backend |
+| `QUERIES_API_URL` | `https://domventas.info/backend/api/v1/scrapper/noon/queries` | Where to fetch search terms |
+| `RESULTS_API_URL` | `https://domventas.info/backend/api/v1/scrapper/noon/results` | Where to post results |
+| `API_TOKEN` | *(baked in by CI)* | Bearer token; must match the backend |
 | `SCRAPER_PROFILE_DIR` | `%LOCALAPPDATA%\NoonSearchTermScrapper\chrome-profile` | Chrome profile holding the login |
 | `SCRAPE_SHORT_CODES` | *(all)* | Comma-separated filter, e.g. `NNAE` |
 | `BROWSER_VISIBLE` | `0` | `1` shows the browser window |
@@ -45,8 +45,10 @@ storefront for a one-time sign-in.
 | `DEFAULT_NOON_DOMAIN` | `www.noon.com` | Host used for the first-run login |
 | `DEFAULT_NOON_LOCALE` | `uae-en` | Storefront opened on first run |
 
-The endpoint defaults are **intentionally blank** — this scraper is meant to be
-launched by the agent, which supplies both URLs from the backend's assignment.
+These defaults come from `src/embedded.ts`, with the token injected at build
+time from the `SCRAPPER_API_TOKEN` secret. The agent still overrides all three
+from the backend's assignment when it launches this scraper — environment
+always beats baked-in.
 
 ## Marketplaces
 

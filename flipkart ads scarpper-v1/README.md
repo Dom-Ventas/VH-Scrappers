@@ -27,18 +27,19 @@ one-time sign-in. Stored in `user-settings.json` inside the Chrome profile.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `QUERIES_API_URL` | *(empty)* | Where to fetch search terms |
-| `RESULTS_API_URL` | *(empty)* | Where to post results |
-| `API_TOKEN` | — | Bearer token; must match the backend |
+| `QUERIES_API_URL` | `https://domventas.info/backend/api/v1/scrapper/flipkart/queries` | Where to fetch search terms |
+| `RESULTS_API_URL` | `https://domventas.info/backend/api/v1/scrapper/flipkart/results` | Where to post results |
+| `API_TOKEN` | *(baked in by CI)* | Bearer token; must match the backend |
 | `SCRAPER_PROFILE_DIR` | `%LOCALAPPDATA%\FlipkartSearchTermScrapper\chrome-profile` | Chrome profile holding the login |
 | `SCRAPE_SHORT_CODES` | *(all)* | Comma-separated filter, e.g. `FKIN` |
 | `BROWSER_VISIBLE` | `0` | `1` shows the browser window |
 | `SCRAPE_DELAY_MS` | `30000` | Pause between queries |
 | `DEFAULT_FLIPKART_DOMAIN` | `www.flipkart.com` | Domain used for the first-run login |
 
-The endpoint defaults are **intentionally blank** — this scraper is meant to be
-launched by the agent, which supplies both URLs from the backend's assignment.
-Running it standalone requires setting them in a `.env`.
+These defaults come from `src/embedded.ts`, with the token injected at build
+time from the `SCRAPPER_API_TOKEN` secret. The agent still overrides all three
+from the backend's assignment when it launches this scraper — environment
+always beats baked-in.
 
 ## Marketplaces
 

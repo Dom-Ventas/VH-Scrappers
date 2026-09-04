@@ -45,7 +45,7 @@ promise is location-dependent and will be wrong or missing without it.
 | --- | --- | --- |
 | `QUERIES_API_URL` | `…/backend/api/v1/scrapper/review-queries` | Where to fetch ASINs |
 | `RESULTS_API_URL` | `…/backend/api/v1/scrapper/reviews` | Where to post results |
-| `API_TOKEN` | — | Bearer token; must match the backend |
+| `API_TOKEN` | *(baked in by CI)* | Bearer token; must match the backend |
 | `SCRAPER_PROFILE_DIR` | `%LOCALAPPDATA%\AmazonReviewScraper\chrome-profile` | Chrome profile holding the login |
 | `SCRAPE_SHORT_CODES` | *(all)* | Comma-separated filter, e.g. `AZUS,AZUK` |
 | `BROWSER_VISIBLE` | `0` | `1` shows the browser window |

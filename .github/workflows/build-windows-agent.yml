@@ -1,9 +1,9 @@
 name: Build Windows Agent
 
-# Builds the three Windows exes (launcher + both scrapers) and publishes them
-# as a downloadable GitHub Release. The scrapper token is baked into the
-# launcher exe from the SCRAPPER_API_TOKEN repo secret at build time, so the
-# released exe is self-contained — no .env needed on employee laptops.
+# Builds all nine Windows exes (three launchers + six scrapers) and publishes
+# them as a downloadable GitHub Release. The scrapper token is baked into every
+# exe from the SCRAPPER_API_TOKEN repo secret at build time, so the released
+# exes are self-contained — no .env needed on employee laptops.
 #
 # Run it: Actions tab -> "Build Windows Agent" -> Run workflow (pick a tag).
 
@@ -50,22 +50,32 @@ jobs:
           grep -q "EMBEDDED_TOKEN = '.\+'" src/embedded.ts || { echo "token injection failed"; exit 1; }
           npm run build:exe:all
 
-      - name: Build Amazon scrapers
+      # Every scraper carries the same two constants as the launcher:
+      # EMBEDDED_TOKEN (injected here from the secret) and EMBEDDED_API_ROOT
+      # (committed, so changing the backend host is a code change).
+      #
+      # The agent still overrides QUERIES_API_URL / RESULTS_API_URL / API_TOKEN
+      # at launch from the backend's assignment — these baked values are the
+      # fallback that makes a scraper exe work when run on its own.
+      - name: Build scrapers (token baked from secret)
+        env:
+          TOKEN: ${{ secrets.SCRAPPER_API_TOKEN }}
         run: |
-          for d in amazon-ads-scraper rating-scraper; do
-            (cd "$d" && npm install --no-audit --no-fund && npm run build:exe)
-          done
-
-      - name: Build Flipkart scrapers
-        run: |
-          for d in "flipkart ads scarpper-v1" "flipkart scarpper rating-v1"; do
-            (cd "$d" && npm install --no-audit --no-fund && npm run build:exe)
-          done
-
-      - name: Build noon scrapers
-        run: |
-          for d in "noon ads scrapper-v1" "noon review scrapper-v1"; do
-            (cd "$d" && npm install --no-audit --no-fund && npm run build:exe)
+          for d in amazon-ads-scraper \
+                   rating-scraper \
+                   "flipkart ads scarpper-v1" \
+                   "flipkart scarpper rating-v1" \
+                   "noon ads scrapper-v1" \
+                   "noon review scrapper-v1"; do
+            echo "::group::$d"
+            (
+              cd "$d"
+              sed -i "s|^export const EMBEDDED_TOKEN = .*|export const EMBEDDED_TOKEN = '${TOKEN}';|" src/embedded.ts
+              grep -q "EMBEDDED_TOKEN = '.\+'" src/embedded.ts || { echo "token injection failed in $d"; exit 1; }
+              npm install --no-audit --no-fund
+              npm run build:exe
+            )
+            echo "::endgroup::"
           done
 
       - name: Collect release files

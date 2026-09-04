@@ -1,6 +1,12 @@
 import * as path from 'path';
 import * as os from 'os';
 import * as dotenv from 'dotenv';
+import {
+  EMBEDDED_API_ROOT,
+  EMBEDDED_TOKEN,
+  QUERY_ENDPOINT,
+  RESULTS_ENDPOINT,
+} from './embedded';
 
 dotenv.config();
 
@@ -10,6 +16,11 @@ function defaultProfileDir(): string {
   return path.join(localAppData, 'SearchTermScrapper', 'chrome-profile');
 }
 
+// API root: env override first (lets a built exe be pointed at staging via a
+// .env), else the value baked in at build time. Trailing slashes stripped so
+// joining an endpoint never produces a double slash.
+const API_ROOT = (process.env.VH_API_ROOT?.trim() || EMBEDDED_API_ROOT).replace(/\/+$/, '');
+
 export const config = {
   profileDir: process.env.SCRAPER_PROFILE_DIR?.trim() || defaultProfileDir(),
   chromeChannel: 'chrome' as const,
@@ -18,9 +29,9 @@ export const config = {
   resultsWaitTimeoutMs: 20_000,
   topNResults: 20,
   defaultAmazonDomain: process.env.DEFAULT_AMAZON_DOMAIN || 'www.amazon.in',
-  queriesApiUrl: process.env.QUERIES_API_URL || 'https://domventas.info/backend/api/v1/scrapper/queries',
-  resultsApiUrl: process.env.RESULTS_API_URL || 'https://domventas.info/backend/api/v1/scrapper/results',
-  apiToken: process.env.API_TOKEN || '',
+  queriesApiUrl: process.env.QUERIES_API_URL || `${API_ROOT}${QUERY_ENDPOINT}`,
+  resultsApiUrl: process.env.RESULTS_API_URL || `${API_ROOT}${RESULTS_ENDPOINT}`,
+  apiToken: process.env.API_TOKEN || EMBEDDED_TOKEN,
   /**
    * Optional comma-separated list of marketplace short codes to scrape.
    * When set, queries from any other marketplace are skipped. Empty = all.
