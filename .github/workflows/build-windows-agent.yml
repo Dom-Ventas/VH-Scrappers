@@ -32,41 +32,64 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Build launcher (token baked from secret)
+      # Builds all three launcher exes from one codebase. They differ only by
+      # EMBEDDED_AGENT_KIND, which each build:exe:* script sets before packaging.
+      #
+      # The token is injected with sed on its own line, NOT by regenerating
+      # embedded.ts. A regenerate-the-file approach (what this step used to do)
+      # silently drops every other constant in the file — including
+      # EMBEDDED_AGENT_KIND, which would make all three exes identify as the
+      # Amazon agent and collide on one device row.
+      - name: Build launchers (token baked from secret)
         working-directory: ventahub-agent
         env:
           TOKEN: ${{ secrets.SCRAPPER_API_TOKEN }}
         run: |
           npm install --no-audit --no-fund
-          printf "export const EMBEDDED_TOKEN = '%s';\nexport const EMBEDDED_API_ROOT = 'https://domventas.info/backend';\n" "$TOKEN" > src/embedded.ts
-          npm run build:exe
+          sed -i "s|^export const EMBEDDED_TOKEN = .*|export const EMBEDDED_TOKEN = '${TOKEN}';|" src/embedded.ts
+          grep -q "EMBEDDED_TOKEN = '.\+'" src/embedded.ts || { echo "token injection failed"; exit 1; }
+          npm run build:exe:all
 
-      - name: Build search-term scraper
-        working-directory: amazon-ads-scraper
+      - name: Build Amazon scrapers
         run: |
-          npm install --no-audit --no-fund
-          npm run build:exe
+          for d in amazon-ads-scraper rating-scraper; do
+            (cd "$d" && npm install --no-audit --no-fund && npm run build:exe)
+          done
 
-      - name: Build review scraper
-        working-directory: rating-scraper
+      - name: Build Flipkart scrapers
         run: |
-          npm install --no-audit --no-fund
-          npm run build:exe
+          for d in "flipkart ads scarpper-v1" "flipkart scarpper rating-v1"; do
+            (cd "$d" && npm install --no-audit --no-fund && npm run build:exe)
+          done
+
+      - name: Build noon scrapers
+        run: |
+          for d in "noon ads scrapper-v1" "noon review scrapper-v1"; do
+            (cd "$d" && npm install --no-audit --no-fund && npm run build:exe)
+          done
 
       - name: Collect release files
         run: |
           mkdir -p out
           cp ventahub-agent/dist/VentaHubAgent.exe out/
+          cp ventahub-agent/dist/VentaHubAgentFlipkart.exe out/
+          cp ventahub-agent/dist/VentaHubAgentNoon.exe out/
           cp amazon-ads-scraper/dist/search-term-scrapper.exe out/
           cp rating-scraper/dist/AmazonReviewScrapper.exe out/
+          cp "flipkart ads scarpper-v1/dist/flipkart-search-term-scrapper.exe" out/
+          cp "flipkart scarpper rating-v1/dist/FlipkartReviewScrapper.exe" out/
+          cp "noon ads scrapper-v1/dist/noon-search-term-scrapper.exe" out/
+          cp "noon review scrapper-v1/dist/noon-review-scrapper.exe" out/
           cp ventahub-agent/install/register-task.ps1 out/
+          cp ventahub-agent/install/register-task-flipkart.ps1 out/
+          cp ventahub-agent/install/register-task-noon.ps1 out/
           ls -lh out
 
       - name: Publish release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          NOTES=$'Windows scraper agent bundle.\n\nSetup on a laptop:\n1. Copy ALL files into one folder (e.g. C:\\VentaHub).\n2. Double-click VentaHubAgent.exe once — enter email + AMS profile IDs, sign in to Amazon, close the tab.\n3. Right-click register-task.ps1 -> Run with PowerShell (registers the every-4-hours task).\n\nRequires Google Chrome installed. The token is baked into the exe; no .env needed.'
+          NOTES=$'Windows scraper agent bundle — one agent per marketplace.\n\nInstall ONLY the agents a laptop needs. Each has its own browser profile, device id and schedule, so they run independently and can share one folder.\n\nSetup on a laptop:\n1. Copy the files you need into one folder (e.g. C:\\VentaHub).\n2. Double-click the agent exe once — enter email + profile IDs, sign in to that marketplace, close the tab. Repeat per agent installed.\n3. Right-click the matching register-task*.ps1 -> Run with PowerShell.\n\nAmazon:   VentaHubAgent.exe + search-term-scrapper.exe + AmazonReviewScrapper.exe + register-task.ps1\nFlipkart: VentaHubAgentFlipkart.exe + flipkart-search-term-scrapper.exe + FlipkartReviewScrapper.exe + register-task-flipkart.ps1\nnoon:     VentaHubAgentNoon.exe + noon-search-term-scrapper.exe + noon-review-scrapper.exe + register-task-noon.ps1\n\nRequires Google Chrome installed. The token is baked into the exe; no .env needed.'
           if gh release view "${{ inputs.release_tag }}" >/dev/null 2>&1; then
             gh release upload "${{ inputs.release_tag }}" out/* --clobber
           else
