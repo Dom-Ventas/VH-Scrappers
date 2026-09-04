@@ -64,6 +64,9 @@ async function getAssignment(agent: AgentConfig): Promise<CheckinResponse | null
       hostname: os.hostname(),
       os: `${os.type()} ${os.release()}`,
       agentVersion: config.agentVersion,
+      // Declares which marketplace this exe is, so the backend serves only
+      // that marketplace's scrapers.
+      agentKind: config.agentKind,
     });
     try {
       fs.writeFileSync(config.cachePath, JSON.stringify(resp), 'utf-8');
@@ -101,7 +104,10 @@ function classify(
 }
 
 async function main(): Promise<void> {
-  log(`[BOOT] VentaHub Agent v${config.agentVersion} home=${config.home}`);
+  log(
+    `[BOOT] VentaHub Agent v${config.agentVersion} kind=${config.agentKind} ` +
+      `home=${config.home}`,
+  );
 
   if (!config.apiToken) {
     log(

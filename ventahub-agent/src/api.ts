@@ -28,6 +28,12 @@ export async function checkin(body: {
   hostname: string;
   os: string;
   agentVersion: string;
+  /**
+   * Which launcher exe this is: amazon | flipkart | noon. The backend returns
+   * only that marketplace's scrapers. Omitting it is valid and means "amazon"
+   * — that is how every pre-split agent still in the field is handled.
+   */
+  agentKind: string;
 }): Promise<CheckinResponse> {
   const res = await postJson(checkinUrl(), body);
   if (!res.ok) {

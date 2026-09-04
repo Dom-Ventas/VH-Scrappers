@@ -35,12 +35,18 @@ export function saveAgentConfig(cfg: AgentConfig): void {
 }
 
 /**
- * First-time setup: collect the employee's email + AMS profile IDs, then open
- * Amazon on the shared Chrome profile for a one-time sign-in. Every scraper
- * reuses this same profile, so the login happens exactly once per laptop.
+ * First-time setup: collect the employee's email + profile IDs, then open THIS
+ * agent's marketplace on its own Chrome profile for a one-time sign-in. Every
+ * scraper this agent launches reuses that profile, so the login happens once
+ * per marketplace per laptop.
+ *
+ * A laptop running the Amazon and Noon agents signs into Amazon once and Noon
+ * once, in two separate profiles. Chromium locks a persistent profile to one
+ * process, which is why they cannot share it — and also why their sessions do
+ * not interfere.
  */
 export async function runFirstLaunch(): Promise<AgentConfig> {
-  console.log('[FIRST-RUN] No agent config found — starting setup');
+  console.log(`[FIRST-RUN] No agent config found — starting setup (${config.agentKind})`);
 
   fs.mkdirSync(config.chromeProfileDir, { recursive: true });
 
@@ -81,9 +87,10 @@ export async function runFirstLaunch(): Promise<AgentConfig> {
   }
 
   console.log(
-    '[FIRST-RUN] Sign in to Amazon and set your delivery pincode, then close the tab',
+    `[FIRST-RUN] Sign in to ${config.firstRunDomain} and set your delivery ` +
+      'address/pincode, then close the tab',
   );
-  await page.goto(`https://${config.defaultAmazonDomain}`, {
+  await page.goto(`https://${config.firstRunDomain}`, {
     waitUntil: 'domcontentloaded',
   });
 
@@ -107,6 +114,15 @@ export async function runFirstLaunch(): Promise<AgentConfig> {
   console.log('[FIRST-RUN] Setup complete');
   return cfg;
 }
+
+// Capitalised marketplace name for the setup form's copy, so a Noon agent does
+// not tell the employee to sign into Amazon.
+const KIND_LABEL: Record<string, string> = {
+  amazon: 'Amazon',
+  flipkart: 'Flipkart',
+  noon: 'noon',
+};
+const MARKETPLACE = KIND_LABEL[config.agentKind] ?? 'the marketplace';
 
 const FORM_HTML = `
 <!DOCTYPE html>
@@ -138,8 +154,8 @@ const FORM_HTML = `
       <input id="email" type="email" placeholder="you@domventas.com" required />
       <label for="profiles">AMS Profile IDs</label>
       <textarea id="profiles" placeholder="One per line, or comma-separated"></textarea>
-      <div class="hint">These identify the Amazon advertiser accounts you scrape for.</div>
-      <button type="submit">Save & continue to Amazon login</button>
+      <div class="hint">These identify the accounts you scrape for.</div>
+      <button type="submit">Save &amp; continue to ${MARKETPLACE} login</button>
     </form>
   </div>
 <script>
@@ -155,7 +171,7 @@ const FORM_HTML = `
     }
     await window.__saveAgentSetup({ emailId: emailId, profileIds: profileIds });
     document.querySelector('.card').innerHTML =
-      '<h1>Thanks!</h1><p class="sub">Opening Amazon — sign in, set your delivery pincode, then close that tab.</p>';
+      '<h1>Thanks!</h1><p class="sub">Opening ${MARKETPLACE} — sign in, set your delivery address, then close that tab.</p>';
   });
 </script>
 </body>

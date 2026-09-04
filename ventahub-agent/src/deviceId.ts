@@ -9,11 +9,21 @@ import { randomUUID } from 'crypto';
  * and therefore the manager-set assignment for this laptop. If a laptop is
  * fully reimaged the id is lost and the device re-registers as new (reverting
  * to the global default); the admin can spot it by hostname and re-assign.
+ *
+ * The backup is namespaced by the agent's home directory name, NOT by a fixed
+ * constant. One laptop runs one agent per marketplace and each needs its own
+ * identity: a shared path would hand all of them the same deviceId, so they
+ * would collide on a single `app_scraper_device` row, be served the same
+ * assignment, and overwrite each other's last_seen and profileIds.
+ *
+ * Deriving it from `path.basename(homeDir)` keeps the amazon agent's path
+ * byte-identical to what it has always been (`…\VentaHubAgent\device.id`), so
+ * upgrading an existing laptop preserves its id and its assignment.
  */
-function backupIdPath(): string {
+function backupIdPath(homeDir: string): string {
   const programData =
     process.env.PROGRAMDATA || path.join(os.homedir(), 'AppData', 'Local');
-  return path.join(programData, 'VentaHubAgent', 'device.id');
+  return path.join(programData, path.basename(homeDir), 'device.id');
 }
 
 function tryRead(p: string): string | null {
@@ -39,7 +49,7 @@ function writeIfMissing(p: string, id: string): void {
 
 export function getOrCreateDeviceId(homeDir: string): string {
   const localPath = path.join(homeDir, 'device.id');
-  const backupPath = backupIdPath();
+  const backupPath = backupIdPath(homeDir);
 
   const existing = tryRead(localPath) || tryRead(backupPath);
   const id = existing || randomUUID();

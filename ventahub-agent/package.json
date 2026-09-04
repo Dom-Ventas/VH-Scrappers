@@ -7,7 +7,10 @@
   "scripts": {
     "dev": "tsx src/index.ts",
     "build": "tsc",
-    "build:exe": "tsc && pkg dist/index.js --targets node20-win-x64 --output dist/VentaHubAgent.exe"
+    "build:exe": "node scripts/set-agent-kind.mjs amazon && tsc && pkg dist/index.js --targets node20-win-x64 --output dist/VentaHubAgent.exe",
+    "build:exe:flipkart": "node scripts/set-agent-kind.mjs flipkart && tsc && pkg dist/index.js --targets node20-win-x64 --output dist/VentaHubAgentFlipkart.exe",
+    "build:exe:noon": "node scripts/set-agent-kind.mjs noon && tsc && pkg dist/index.js --targets node20-win-x64 --output dist/VentaHubAgentNoon.exe",
+    "build:exe:all": "npm run build:exe:flipkart && npm run build:exe:noon && npm run build:exe"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

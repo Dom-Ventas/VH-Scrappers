@@ -10,6 +10,8 @@
     "dev": "tsx src/index.ts",
     "start": "tsx src/index.ts",
     "build": "tsc",
+    "_comment:build:exe": "Entry is dist/src/index.js, NOT dist/index.js as in the sibling scrapers: tsconfig here sets rootDir '.' (it must also cover mock-server/), so tsc mirrors the source tree under dist/.",
+    "build:exe": "tsc && pkg dist/src/index.js --targets node20-win-x64 --output dist/noon-review-scrapper.exe",
     "clean": "rimraf dist"
   },
   "dependencies": {
@@ -20,8 +22,17 @@
   "devDependencies": {
     "@types/express": "^5.0.0",
     "@types/node": "^24.0.15",
+    "@yao-pkg/pkg": "^5.16.1",
     "rimraf": "^6.0.1",
     "tsx": "^4.20.3",
     "typescript": "^5.8.3"
+  },
+  "pkg": {
+    "assets": [
+      "node_modules/playwright-core/**/*"
+    ],
+    "targets": [
+      "node20-win-x64"
+    ]
   }
 }
