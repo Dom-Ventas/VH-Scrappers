@@ -1,7 +1,7 @@
-import { Page } from 'playwright';
+import { Locator, Page } from 'playwright';
 import { config } from './config';
 import { Product } from './types';
-import { extractProduct, SELECTORS } from './extractors';
+import { detectSponsored, extractProduct, ownTrackingIdPrefix, SELECTORS } from './extractors';
 import { sleep } from './util';
 
 function buildSearchUrl(domain: string, searchTerm: string): string {
@@ -30,6 +30,69 @@ async function dismissLoginModal(page: Page): Promise<void> {
       // try the next candidate
     }
   }
+}
+
+/**
+ * How long to wait before re-checking sponsored badges when the first pass
+ * found none. Flipkart's ad markup is attached client-side and can trail the
+ * product grid by a second or so on slow hardware.
+ */
+const SPONSORED_RETRY_DELAY_MS = 1_500;
+
+/**
+ * Re-run sponsored detection on every card when the first pass found no ads.
+ *
+ * Zero ads on a full Flipkart results page is rare — the page usually seeds
+ * about a third of the first 20 tiles with paid placements — so an all-organic
+ * result is far more likely to be a race with Flipkart's ad script than a
+ * genuine reading. Sending it as-is makes the backend fill both the competitor
+ * and the organic slots from the same products. Waiting once and re-checking
+ * costs 1.5 s per affected query and recovers the split in the common case.
+ *
+ * Mutates `products[i].isSponsored` in place and returns how many cards are
+ * sponsored after the retry. When the retry still finds none, logs each
+ * card's tracking-id prefix so the run log shows whether Flipkart served no
+ * ads (uuid prefixes) or the selectors have drifted (`en_` prefixes).
+ */
+export async function retrySponsoredDetection(
+  cards: Locator,
+  products: Product[],
+  searchTerm: string,
+): Promise<number> {
+  if (products.length === 0 || products.some((p) => p.isSponsored)) {
+    return products.filter((p) => p.isSponsored).length;
+  }
+
+  console.warn(
+    `[SPONSORED] "${searchTerm}": 0/${products.length} cards detected as sponsored on first pass; ` +
+      `waiting ${SPONSORED_RETRY_DELAY_MS}ms and re-checking`,
+  );
+  await sleep(SPONSORED_RETRY_DELAY_MS);
+
+  let found = 0;
+  for (let i = 0; i < products.length; i++) {
+    // Cards that failed extraction have no PID; the backend drops them anyway.
+    if (!products[i].asin) continue;
+    if (await detectSponsored(cards.nth(i))) {
+      products[i].isSponsored = true;
+      found++;
+    }
+  }
+
+  if (found > 0) {
+    console.warn(`[SPONSORED] "${searchTerm}": retry detected ${found}/${products.length} sponsored`);
+    return found;
+  }
+
+  const prefixes: string[] = [];
+  for (let i = 0; i < products.length; i++) {
+    prefixes.push(`${i + 1}:${(await ownTrackingIdPrefix(cards.nth(i))) || '?'}`);
+  }
+  console.warn(
+    `[SPONSORED] "${searchTerm}": still 0 sponsored after retry — comp and org slots will be ` +
+      `identical for this row. Card tkid prefixes: ${prefixes.join(' ')}`,
+  );
+  return 0;
 }
 
 export async function scrapeSearchTerm(
@@ -84,6 +147,8 @@ export async function scrapeSearchTerm(
       });
     }
   }
+
+  await retrySponsoredDetection(cards, products, searchTerm);
 
   return products;
 }

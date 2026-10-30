@@ -1,4 +1,4 @@
-import { config } from '../config';
+import { authFetch } from './auth';
 
 /**
  * Node's fetch throws a bare "TypeError: fetch failed" with the real reason
@@ -74,8 +74,10 @@ export class ApiConnectionError extends Error {
 }
 
 /**
- * fetch(), but a transport failure raises an actionable error rather than
- * "TypeError: fetch failed". Non-2xx responses are left to the caller, which
+ * authFetch() (bearer token from the service account, see ./auth), but a
+ * transport failure raises an actionable error rather than "TypeError: fetch
+ * failed". Auth failures (AuthError, an unreachable auth service) pass through
+ * with their own message. Non-2xx responses are left to the caller, which
  * knows what a meaningful status means for its endpoint.
  */
 export async function apiFetch(
@@ -85,25 +87,16 @@ export async function apiFetch(
 
   try {
 
-    return await fetch(url, init);
+    return await authFetch(url, init);
 
   } catch (err) {
+
+    // fetch() reports a transport failure as a TypeError; anything else
+    // (AuthError, token-exchange failures) already says what to do.
+    if (!(err instanceof TypeError)) throw err;
 
     throw new ApiConnectionError(
       unreachableMessage(url, err)
     );
   }
-}
-
-export function authHeaders(): Record<string, string> {
-
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json'
-  };
-
-  if (config.apiToken) {
-    headers.Authorization = `Bearer ${config.apiToken}`;
-  }
-
-  return headers;
 }

@@ -1,37 +1,57 @@
 import { config } from '../config';
+import { authFetch } from './auth';
 import { Query } from '../types';
 
-/**
- * Fetch the list of search terms / ASINs to scrape from your backend, scoped
- * to a single profile. Each Query has { id, shortCode, searchTerm } where
- * `shortCode` is a marketplace short code (e.g. "AZIN") that the scrapper
- * resolves to an Amazon host via src/marketplaces.ts.
- */
-export async function fetchQueries(profileId: string): Promise<Query[]> {
-  if (!config.queriesApiUrl) {
-    // Fallback sample queries so `npm run dev` is usable before the API is wired.
-    console.warn(
-      '[fetchQueries] QUERIES_API_URL is not set — returning sample queries. Set QUERIES_API_URL to call your real API.',
-    );
-    return [
-      { id: 'sample-1', shortCode: 'AZIN', searchTerm: 'bluetooth headphones' },
-      { id: 'sample-2', shortCode: 'AZIN', searchTerm: 'running shoes' },
-    ];
-  }
+/** The backend refuses more than 50 store ids in one request. */
+const MAX_STORES_PER_REQUEST = 50;
+/** The backend's page size cap. */
+const PAGE_LIMIT = 100;
 
-  const url = `${config.queriesApiUrl}?profile_id=${encodeURIComponent(profileId)}`;
-  const res = await fetch(url, {
-    headers: { Authorization: `Bearer ${config.apiToken}` },
-  });
-  if (!res.ok) {
-    throw new Error(`fetchQueries ${res.status} ${res.statusText}`);
+interface QueuePage {
+  items: Array<{ store_id: number; short_code: string; search_term: string }>;
+  pagination: { page: number; limit: number; total: number; pages: number };
+}
+
+/**
+ * Fetch the whole search-term queue for the given VentaWiz stores, once, up
+ * front. GET `${queriesApiUrl}?store_id=..&store_id=..&marketplace=amazon&page=N&limit=100`,
+ * chunked to 50 stores per request and paged until `pagination.pages`.
+ *
+ * Each Query carries its own storeId and shortCode (e.g. "AZAE"), which the
+ * scraper resolves to an Amazon host via src/marketplaces.ts. Terms already
+ * scraped today are left out by the backend.
+ */
+export async function fetchQueries(storeIds: number[]): Promise<Query[]> {
+  const queries: Query[] = [];
+  for (let c = 0; c < storeIds.length; c += MAX_STORES_PER_REQUEST) {
+    const chunk = storeIds.slice(c, c + MAX_STORES_PER_REQUEST);
+    for (let page = 1; ; page++) {
+      const params = new URLSearchParams();
+      for (const id of chunk) params.append('store_id', String(id));
+      params.set('marketplace', config.marketplace);
+      params.set('page', String(page));
+      params.set('limit', String(PAGE_LIMIT));
+      const url = `${config.queriesApiUrl}?${params.toString()}`;
+
+      const res = await authFetch(url);
+      if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`fetchQueries ${res.status} ${res.statusText} ${text}`);
+      }
+      const data = (await res.json()) as QueuePage;
+      if (!data || !Array.isArray(data.items)) {
+        throw new Error('fetchQueries: invalid queue response (no items array)');
+      }
+      for (const row of data.items) {
+        queries.push({
+          storeId: row.store_id,
+          shortCode: row.short_code,
+          searchTerm: row.search_term,
+        });
+      }
+      const pages = data.pagination?.pages ?? 0;
+      if (pages === 0 || page >= pages) break;
+    }
   }
-  const data = (await res.json()) as {
-    items: Array<{ id: string; short_code: string; keyword: string }>;
-  };
-  return data.items.map((row) => ({
-    id: row.id,
-    shortCode: row.short_code,
-    searchTerm: row.keyword,
-  }));
+  return queries;
 }

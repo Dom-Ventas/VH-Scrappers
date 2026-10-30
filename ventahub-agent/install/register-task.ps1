@@ -1,4 +1,8 @@
-# Registers a VentaHub Scraper Agent to run every 4 hours via Task Scheduler.
+# Registers a VentaWiz Scraper Agent to run every 2 hours via Task Scheduler.
+#
+# Every 2 hours, not 4: the server alternates ads and reviews per 2-hour UTC
+# block, so a 4-hour schedule would always land in the same kind of block and
+# never run the other.
 # Run this ONCE per laptop PER MARKETPLACE (right-click > Run with PowerShell)
 # after copying the agent folder (the agent exe + its scraper exes) onto the
 # machine.
@@ -44,12 +48,12 @@ $ExeDir = Split-Path -Parent $ExePath
 
 $Action = New-ScheduledTaskAction -Execute $ExePath -WorkingDirectory $ExeDir
 
-# Fire 5 minutes from now, then repeat every 4 hours forever.
+# Fire 5 minutes from now, then repeat every 2 hours forever.
 $Trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(5) `
-    -RepetitionInterval (New-TimeSpan -Hours 4)
+    -RepetitionInterval (New-TimeSpan -Hours 2)
 
 # IgnoreNew => never start a second instance of THIS task while one is still
-# running. Different marketplaces are different tasks, so they may overlap —
+# running (a cycle longer than 2 hours just skips the next start). Different marketplaces are different tasks, so they may overlap —
 # which is fine and intended: each has its own Chrome profile, so they do not
 # contend for Chromium's profile lock.
 $Settings = New-ScheduledTaskSettingsSet `
@@ -68,10 +72,10 @@ Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger `
 Write-Host "Registered scheduled task '$TaskName'."
 Write-Host "  Kind:     $Kind"
 Write-Host "  Exe:      $ExePath"
-Write-Host "  Schedule: every 4 hours (first run ~5 min from now)."
+Write-Host "  Schedule: every 2 hours (first run ~5 min from now)."
 Write-Host ""
 Write-Host "IMPORTANT — first-time setup:"
-Write-Host "  Double-click $ExeName once now to enter your email + profile IDs and"
+Write-Host "  Double-click $ExeName once now to enter your email + store IDs and"
 Write-Host "  sign in to $($Spec.Site). After that, the scheduled task runs unattended."
 Write-Host "  Each marketplace agent has its own browser profile, so this sign-in is"
 Write-Host "  needed once per agent, not once per laptop."

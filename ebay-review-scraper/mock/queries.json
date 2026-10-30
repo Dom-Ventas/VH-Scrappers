@@ -1,0 +1,6 @@
+[
+  { "store_id": 13, "short_code": "EBUS", "mp_product_id": "265983500898", "product_ids": [101] },
+  { "store_id": 13, "short_code": "EBUS", "mp_product_id": "405662453606", "product_ids": [102, 103] },
+  { "store_id": 13, "short_code": "EBDE", "mp_product_id": "278359701353", "product_ids": [104] },
+  { "store_id": 13, "short_code": "EBUS", "mp_product_id": "999999999999", "product_ids": [105] }
+]

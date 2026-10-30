@@ -1,5 +1,6 @@
 import * as fs from 'fs';
-import { chromium, BrowserContext } from 'playwright';
+import { BrowserContext } from 'playwright';
+import { launchChrome } from './chromeProfile';
 import { config } from './config';
 
 export interface OpenContextOpts {
@@ -26,10 +27,13 @@ export async function openPersistentContext(
     ? ['--start-maximized']
     : ['--window-position=-32000,-32000', '--window-size=1920,1080'];
 
-  const context = await chromium.launchPersistentContext(config.profileDir, {
+  const context = await launchChrome(config.profileDir, {
     headless: false,
     channel: config.chromeChannel,
-    viewport: null,
+    // Pinned rather than `null` (which inherits the OS window size and gave a
+    // 1280-wide page here). Width changes how many banner slots and grid
+    // columns Amazon renders, so it must be deterministic.
+    viewport: { width: config.viewportWidth, height: config.viewportHeight },
     args: [...windowArgs, '--disable-blink-features=AutomationControlled'],
   });
 

@@ -1,15 +1,4 @@
-{
-  "_comment": [
-    "Local work list, used while the backend API is pending.",
-    "Copy this to queries.json. Keys are profile IDs, matching the profileIds",
-    "entered during first run. Setting QUERIES_API_URL in .env makes this file",
-    "unused — no code change needed.",
-    "pid is the Flipkart PID, the ASIN equivalent. Find it in any product URL:",
-    "https://www.flipkart.com/...?pid=ACCGJP5QSJFP7HAP"
-  ],
-
-  "default": [
-    { "productId": 101, "pid": "TVSHBYPVRKUVGNGM", "shortCode": "FKIN" },
-    { "productId": 102, "pid": "ACCGJP5QSJFP7HAP", "shortCode": "FKIN" }
-  ]
-}
+[
+  { "product_ids": [101], "mp_product_id": "TVSHBYPVRKUVGNGM", "short_code": "FKIN", "store_id": 13 },
+  { "product_ids": [102, 103], "mp_product_id": "ACCGJP5QSJFP7HAP", "short_code": "FKIN", "store_id": 13 }
+]

@@ -15,9 +15,10 @@ import { randomUUID } from 'crypto';
 
 import { config } from './config';
 import { checkin, reportRun } from './api';
-import { loadAgentConfig, runFirstLaunch } from './firstRun';
-import { ChildResult, runScraper } from './spawn';
-import { AgentConfig, CheckinResponse } from './types';
+import { AuthError, getAccessToken, useServiceAccount } from './auth';
+import { effectiveCredentials, loadAgentConfig, runFirstLaunch } from './firstRun';
+import { ChildResult, killActiveChild, runScraper } from './spawn';
+import { AgentConfig, CachedAssignment, CheckinResponse } from './types';
 
 function log(msg: string): void {
   const line = `[${new Date().toISOString()}] ${msg}`;
@@ -30,60 +31,87 @@ function log(msg: string): void {
   }
 }
 
-/** Single-instance guard so an overrunning cycle can't overlap the next wake. */
-function acquireLock(): boolean {
-  try {
-    fs.mkdirSync(config.home, { recursive: true });
-    if (fs.existsSync(config.lockPath)) {
-      const ageMs = Date.now() - fs.statSync(config.lockPath).mtimeMs;
-      // Steal a stale lock (a crashed cycle) after 2h.
-      if (ageMs < 2 * 60 * 60 * 1000) return false;
+/**
+ * Clear every lock this agent can be blocked by, unconditionally, at startup:
+ * the agent's own cycle.lock and Chrome's profile lock files. A killed run
+ * (console closed, Task Scheduler time limit, sleep) leaves these behind, and
+ * they used to block runs for hours. No single-instance guard remains — Task
+ * Scheduler's IgnoreNew is what stops scheduled cycles from overlapping.
+ */
+function clearLocks(): void {
+  const files = [
+    config.lockPath,
+    // Windows uses `lockfile`; Linux/macOS use the Singleton* trio.
+    ...['lockfile', 'SingletonLock', 'SingletonCookie', 'SingletonSocket'].map((name) =>
+      path.join(config.chromeProfileDir, name),
+    ),
+  ];
+  for (const file of files) {
+    try {
+      fs.rmSync(file, { force: true });
+    } catch {
+      /* still held by a running Chrome — leave it */
     }
-    fs.writeFileSync(config.lockPath, String(process.pid), { flag: 'w' });
-    return true;
-  } catch {
-    return false;
   }
 }
 
-function releaseLock(): void {
+/**
+ * Read the cached assignment, but only if it is from the last cycle (cached at
+ * most `cacheMaxAgeMs` ago). The server alternates ads and reviews per 2-hour
+ * block, so an older one would run the wrong kind. A pre-VentaWiz cache (no
+ * `cachedAt`) is treated as stale.
+ */
+function readFreshCache(): CheckinResponse | null {
   try {
-    fs.unlinkSync(config.lockPath);
+    if (!fs.existsSync(config.cachePath)) return null;
+    const cached = JSON.parse(fs.readFileSync(config.cachePath, 'utf-8')) as Partial<CachedAssignment>;
+    const cachedAtMs = cached.cachedAt ? Date.parse(cached.cachedAt) : NaN;
+    if (!cached.response || Number.isNaN(cachedAtMs)) {
+      log('[CHECKIN] cached assignment has no timestamp — ignoring it');
+      return null;
+    }
+    const ageMs = Date.now() - cachedAtMs;
+    if (ageMs < 0 || ageMs > config.cacheMaxAgeMs) {
+      log(`[CHECKIN] cached assignment is from ${cached.cachedAt} — too old, ignoring it`);
+      return null;
+    }
+    log(`[CHECKIN] replaying assignment cached at ${cached.cachedAt}`);
+    return cached.response;
   } catch {
-    /* ignore */
+    return null;
   }
 }
 
-/** Check in with VentaHub; fall back to the last cached assignment on failure. */
+/** Check in with VentaWiz; fall back to a fresh cached assignment on failure. */
 async function getAssignment(agent: AgentConfig): Promise<CheckinResponse | null> {
   try {
     const resp = await checkin({
-      deviceId: agent.deviceId,
-      email: agent.emailId,
-      profileIds: agent.profileIds,
-      hostname: os.hostname(),
-      os: `${os.type()} ${os.release()}`,
-      agentVersion: config.agentVersion,
+      device_id: agent.deviceId,
       // Declares which marketplace this exe is, so the backend serves only
       // that marketplace's scrapers.
-      agentKind: config.agentKind,
+      agent_kind: config.agentKind,
+      store_ids: agent.storeIds,
+      email: agent.emailId,
+      hostname: os.hostname(),
+      os: `${os.type()} ${os.release()}`,
+      agent_version: config.agentVersion,
     });
     try {
-      fs.writeFileSync(config.cachePath, JSON.stringify(resp), 'utf-8');
+      const cached: CachedAssignment = { cachedAt: new Date().toISOString(), response: resp };
+      fs.writeFileSync(config.cachePath, JSON.stringify(cached), 'utf-8');
     } catch {
       /* cache is best-effort */
     }
     return resp;
   } catch (err) {
-    log(`[CHECKIN] failed (${(err as Error).message}) — trying cached assignment`);
-    try {
-      if (fs.existsSync(config.cachePath)) {
-        return JSON.parse(fs.readFileSync(config.cachePath, 'utf-8')) as CheckinResponse;
-      }
-    } catch {
-      /* ignore */
+    // Rejected credentials / missing scrapper:run: the children would fail
+    // the same way, so replaying a cached assignment only adds noise.
+    if (err instanceof AuthError) {
+      log(`[CHECKIN] ${err.message} — not running any scraper`);
+      return null;
     }
-    return null;
+    log(`[CHECKIN] failed (${(err as Error).message}) — trying cached assignment`);
+    return readFreshCache();
   }
 }
 
@@ -105,103 +133,116 @@ function classify(
 
 async function main(): Promise<void> {
   log(
-    `[BOOT] VentaHub Agent v${config.agentVersion} kind=${config.agentKind} ` +
+    `[BOOT] VentaWiz Agent v${config.agentVersion} kind=${config.agentKind} ` +
       `home=${config.home}`,
   );
-
-  if (!config.apiToken) {
-    log(
-      '[FATAL] API_TOKEN is not set. Put a .env next to VentaHubAgent.exe with ' +
-        'API_TOKEN=<token> (see .env.example), then re-run.',
-    );
-    process.exit(1);
-  }
 
   let agent = loadAgentConfig();
   if (!agent) {
     agent = await runFirstLaunch();
   }
+  const credentials = effectiveCredentials(agent);
+  useServiceAccount(credentials);
+  // Client id only — the secret is never logged.
   log(
     `[BOOT] device=${agent.deviceId} email=${agent.emailId} ` +
-      `profiles=[${agent.profileIds.join(',')}]`,
+      `stores=[${agent.storeIds.join(',')}] client=${credentials.clientId} ` +
+      `auth=${config.authRoot}`,
   );
 
-  if (!acquireLock()) {
-    log('[LOCK] another cycle is already running — exiting');
+  // Fail fast on rejected credentials, before touching locks or Chrome. A
+  // network failure here is not fatal: check-in falls back to the cache.
+  try {
+    await getAccessToken();
+  } catch (err) {
+    if (err instanceof AuthError) {
+      log(
+        `[FATAL] ${err.message}. Fix the service account, or delete ` +
+          `${config.configPath} to enter a new client id/secret, then re-run.`,
+      );
+      process.exit(1);
+    }
+    log(`[AUTH] token exchange failed (${(err as Error).message}) — continuing`);
+  }
+
+  clearLocks();
+
+  const cycleId = randomUUID();
+  const resp = await getAssignment(agent);
+  if (!resp) {
+    log('[CHECKIN] no assignment available (and no recent cache) — nothing to do');
     return;
   }
 
-  try {
-    const cycleId = randomUUID();
-    const resp = await getAssignment(agent);
-    if (!resp) {
-      log('[CHECKIN] no assignment available (and no cache) — nothing to do');
-      return;
-    }
-
-    if (resp.status !== 'active') {
-      log(`[ASSIGN] device status=${resp.status} — no scrapers to run`);
-      return;
-    }
-    if (!resp.assignments.length) {
-      log('[ASSIGN] no scrapers assigned to this device today');
-      return;
-    }
-
-    log(`[ASSIGN] running: ${resp.assignments.map((a) => a.scraperKey).join(', ')}`);
-
-    // Sequential — the scrapers share ONE Chrome profile (Chromium locks it).
-    for (const a of resp.assignments) {
-      const startedAt = new Date().toISOString();
-      log(`[RUN] starting ${a.scraperKey} (${a.exeName})`);
-
-      let errorMsg: string | null = null;
-      let result: ChildResult;
-      try {
-        result = await runScraper(a, agent);
-      } catch (err) {
-        errorMsg = (err as Error).message;
-        result = { exitCode: null, itemsOk: 0, itemsFailed: 0, sawDone: false, logTail: [errorMsg] };
-      }
-
-      const finishedAt = new Date().toISOString();
-      const status = classify(
-        errorMsg,
-        result.exitCode,
-        result.sawDone,
-        result.itemsOk,
-        result.itemsFailed,
-      );
-
-      log(
-        `[RUN] ${a.scraperKey} → ${status} ok=${result.itemsOk} ` +
-          `failed=${result.itemsFailed} exit=${result.exitCode}`,
-      );
-
-      await reportRun({
-        deviceId: agent.deviceId,
-        scraperKey: a.scraperKey,
-        cycleId,
-        startedAt,
-        finishedAt,
-        status,
-        exitCode: result.exitCode,
-        itemsOk: result.itemsOk,
-        itemsFailed: result.itemsFailed,
-        itemsTotal: result.itemsOk + result.itemsFailed,
-        errorMsg,
-        logTail: result.logTail,
-      });
-    }
-
-    log('[DONE] cycle complete');
-  } finally {
-    releaseLock();
+  if (resp.status !== 'active') {
+    log(`[ASSIGN] device status=${resp.status} — no scrapers to run`);
+    return;
   }
+  if (!resp.assignments.length) {
+    log('[ASSIGN] no scrapers assigned to this device this cycle');
+    return;
+  }
+
+  log(`[ASSIGN] running: ${resp.assignments.map((a) => a.scraper_key).join(', ')}`);
+
+  // Sequential — the scrapers share ONE Chrome profile (Chromium locks it).
+  for (const a of resp.assignments) {
+    const startedAt = new Date().toISOString();
+    log(`[RUN] starting ${a.scraper_key} (${a.exe_name}) marketplace=${a.marketplace}`);
+
+    let errorMsg: string | null = null;
+    let result: ChildResult;
+    try {
+      result = await runScraper(a, agent, credentials);
+    } catch (err) {
+      errorMsg = (err as Error).message;
+      result = { exitCode: null, itemsOk: 0, itemsFailed: 0, sawDone: false, logTail: [errorMsg] };
+    }
+
+    const finishedAt = new Date().toISOString();
+    const status = classify(
+      errorMsg,
+      result.exitCode,
+      result.sawDone,
+      result.itemsOk,
+      result.itemsFailed,
+    );
+
+    log(
+      `[RUN] ${a.scraper_key} → ${status} ok=${result.itemsOk} ` +
+        `failed=${result.itemsFailed} exit=${result.exitCode}`,
+    );
+
+    await reportRun({
+      device_id: agent.deviceId,
+      scraper_key: a.scraper_key,
+      cycle_id: cycleId,
+      started_at: startedAt,
+      finished_at: finishedAt,
+      status,
+      exit_code: result.exitCode,
+      items_ok: result.itemsOk,
+      items_failed: result.itemsFailed,
+      items_total: result.itemsOk + result.itemsFailed,
+      error_msg: errorMsg,
+      log_tail: result.logTail,
+    });
+  }
+
+  log('[DONE] cycle complete');
+}
+
+// Ctrl+C or closing the console window: stop the running scraper (and its
+// Chrome) instead of leaving it running in the background.
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK'] as const) {
+  process.on(signal, () => {
+    log(`[STOP] received ${signal} — stopping scraper`);
+    killActiveChild();
+    process.exit(130);
+  });
 }
 
 main().catch((err) => {
   log(`[FATAL] ${err?.stack || err}`);
-  releaseLock();
   process.exit(1);
 });

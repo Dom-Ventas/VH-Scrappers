@@ -4,10 +4,9 @@ Scrapes Noon product ratings and critical reviews, mirroring the structure and
 control flow of the Amazon and Flipkart scrapers so all three are operated the
 same way.
 
-Pulls a work list from an API, scrapes each SKU with a persistent Chrome
-profile, POSTs results back. The real backend does not exist yet, so a local
-**mock server** speaks the exact contract it will speak — cutting over is two
-lines of `.env`.
+Pulls a work list from the VentaWiz backend (`GET /v1/scrapper/review-queries`),
+scrapes each SKU with a persistent Chrome profile, and POSTs one result per
+queue item to `POST /v1/scrapper/reviews`.
 
 ## Quick start
 
@@ -15,21 +14,17 @@ lines of `.env`.
 npm install
 ```
 
-Start the mock API (leave it running in its own terminal):
-
-```bash
-npm run mock
-```
-
-Then run the scraper:
+Run the scraper:
 
 ```bash
 npm run dev
 ```
 
-First launch opens a settings form (email + profile IDs), then Noon so you can
-log in if you want to. Both are saved into the Chrome profile folder and reused,
-so later runs are unattended.
+First launch opens a settings form (email + VentaWiz **store IDs**, positive
+integers), then Noon so you can log in if you want to. Both are saved into the
+Chrome profile folder and reused, so later runs are unattended. When the agent
+launches the scraper it passes `SCRAPE_STORE_IDS` and no form is shown. An old
+`user-settings.json` holding only VentaHub `profileIds` counts as no settings.
 
 ## How it maps to the other scrapers
 
@@ -45,18 +40,40 @@ no slug lookup is needed. SKUs come in at least two shapes — `N` + digits + a
 letter (`N70140491V`) and a longer `Z…Z` form (`Z44E5C508ADFB5FF3C397Z`) — so
 nothing validates the format; the SKU is passed through as given.
 
+## Service account
+
+There is no shared token. Every VentaWiz call is authenticated with a
+**VentaWiz service account** — `VW_CLIENT_ID` (`svc_…`) + `VW_CLIENT_SECRET`
+(`vws_…`). [`src/api/auth.ts`](src/api/auth.ts) exchanges them for a
+short-lived bearer token at `POST {VW_AUTH_URL}/v1/token` (OAuth
+`client_credentials`), caches it until 60 s before expiry, and re-exchanges
+once on a 401. When the agent launches this scraper it passes all three
+variables; for a standalone run put them in `.env`. Missing credentials print
+`[FAIL]` + `[DONE]` and the run exits without opening Chrome; a rejected
+id/secret reads `client id/secret rejected — check the service account`, and a
+403 reads `service account lacks scrapper:run`.
+
+A VentaWiz admin creates the account in VentaWiz-Auth —
+`POST /v1/service-principals` (the secret is shown **once**) — and grants it
+`scrapper:run` with `POST /v1/grants`, at client or store scope. See the
+[root README](../README.md#2-credentials--ventawiz-service-accounts).
+
 ## Configuration
 
 Copy `.env.example` to `.env`. The values that matter day to day:
 
 | Variable | Meaning |
 | --- | --- |
-| `QUERIES_API_URL` / `RESULTS_API_URL` | Production by default; point at the mock to develop offline |
-| `API_TOKEN` | Bearer sent on both calls — the one shared scrapper token (see below) |
+| `VH_API_ROOT` | VentaWiz server root; default in `src/embedded.ts` |
+| `QUERIES_API_URL` / `RESULTS_API_URL` | Full overrides of `${VH_API_ROOT}/v1/scrapper/review-queries` and `…/reviews` (set by the agent) |
+| `SCRAPE_STORE_IDS` | Comma-separated store ids; set by the agent, else `user-settings.json` |
+| `SCRAPE_MARKETPLACE` | Sent as `marketplace=` on the queue request (default `noon`) |
+| `VW_AUTH_URL` | VentaWiz auth service root; default in `src/embedded.ts` (`http://localhost:8100`) |
+| `VW_CLIENT_ID` / `VW_CLIENT_SECRET` | VentaWiz service account (`svc_…` / `vws_…`); set by the agent — see *Service account* |
 | `SCRAPER_PROFILE_DIR` | Chrome profile + `user-settings.json` live here |
 | `SCRAPE_DELAY_MS` | Pause between SKUs (default 30s) |
 | `MAX_CRITICAL_REVIEWS` | Cap per SKU (default 200) |
-| `SCRAPE_SHORT_CODES` | Allow-list, e.g. `NNAE,NNSA`. Empty = everything |
+| `SCRAPE_SHORT_CODES` | Optional local allow-list on `short_code`, e.g. `NNAE,NNSA`. Empty = everything |
 | `BROWSER_VISIBLE` | `1` to watch the run; otherwise the window is parked off-screen |
 
 ### Markets
@@ -82,72 +99,52 @@ Chrome outright — its built-in user agent contains `HeadlessChrome` — so
 `-32000,-32000` when `BROWSER_VISIBLE` is not set. Unattended runs therefore
 still need a display session; on a headless Linux box, run it under `xvfb-run`.
 
-## Mock server
-
-`mock-server/server.ts` is contract-identical to the future API — same paths,
-same bearer check, same response shapes.
+## Queue and results
 
 ```
-GET  /api/v1/scrapper/noon/review-queries?profile_id=<id>   -> { items: [...] }
-POST /api/v1/scrapper/noon/reviews                          -> { ok: true }
+GET /v1/scrapper/review-queries?store_id=13&store_id=16&marketplace=noon&page=1&limit=100
+ -> { items: [ { product_ids: [101, 102], mp_product_id: "N70140491V", short_code: "NNAE", store_id: 13 } ],
+      pagination: { page, limit, total, pages } }
 ```
 
-- Work list: `mock-server/queries.json`, re-read on every request so you can
-  edit the test set without restarting. Rows carry a `note` field describing
-  what each SKU is there to exercise; the server ignores it.
-- Two seeded profiles: **`demo`** — 10 real SKUs across 7 categories and both
-  `NNAE` and `NNSA`, review counts from 9 to 48,000 — and **`edge`**, holding the
-  awkward cases (zero-rating product, unavailable product, non-existent SKU,
-  unknown short code). Point `profileIds` in `user-settings.json` at whichever
-  you want to run.
-- Results: written to `mock-server/received/` as one JSON per SKU.
-- Rejects a wrong bearer token with 401, and a missing `profile_id` with 400, so
-  auth and parameter bugs surface now rather than at cutover.
+The whole queue is fetched once per run (pages followed to the end, store ids
+sent 50 per request). `mp_product_id` is the noon zsku / SKU; `short_code` picks
+the storefront.
 
-### Switching between production and the mock
-
-`.env` ships pointed at production. To develop offline, swap the two URLs to the
-mock — nothing in `src/` moves either way:
-
-```
-QUERIES_API_URL=http://localhost:4000/api/v1/scrapper/noon/review-queries
-RESULTS_API_URL=http://localhost:4000/api/v1/scrapper/noon/reviews
-```
-
-The mock serves both the bare `/api/v1/...` paths and the `/backend`-prefixed
-ones, matching the backend's `api_v1_prefix` and its production proxy mount.
+> The old `mock-server/` (VentaHub contract) is not in the repo, so `npm run
+> mock` does not work.
 
 ### Auth
 
-The backend authenticates **every** scrapper endpoint — Amazon, Flipkart and
-Noon alike — against a single shared static bearer, `settings.scrapper_api_token`
-(`src/modules/scrapper/dependencies.py`). There is no per-scraper token: the
-value in `API_TOKEN` is the same one the other scrapers use. `.env` is
-gitignored and `.env.example` deliberately leaves it blank.
+Every scrapper endpoint takes a bearer token from the laptop's VentaWiz
+service account — see *Service account* above. The backend takes the tenant
+from the token and requires `scrapper:run`; a store outside the account's
+grant answers 404, like a missing one. `.env` is gitignored and `.env.example`
+leaves the credentials blank.
 
 ## What gets collected
 
 ```jsonc
 {
-  "emailId": "...", "profileId": "demo", "productId": 1,
-  "sku": "N70140491V", "shortCode": "NNAE",
-  "rating": 4.7,                 // aggregate rating
-  "ratingCount": 48382,
-  "criticalReviews": { "reviews": [ /* every review rated 1 or 2 */ ] },
+  "store_id": 13, "product_ids": [101, 102],   // copied from the queue item
+  "rating": 4.7,                 // 0-5, 2 decimals; null when there are no ratings
+  "rating_count": 48382,
+  "critical_reviews": { "reviews": [ /* every review rated 1 or 2 */ ] },
+  "aplus_content": null,         // noon has no A+ module
   "delivery_promise_days": 1,    // promised date - today; null when none shown
-  "price": 2699, "currency": "AED", "availability": "InStock"
+  "price": 2699, "currency": "AED", "availability": "InStock"  // noon extras, ignored by the backend
 }
 ```
 
-`delivery_promise_days` is sent in both snake_case and camelCase, matching what
-the Amazon scraper already posts, so one backend handler can serve all three.
+A 404 means a product id is not a focused listing of that store; the item is
+logged `[FAIL]` with the backend's message.
 
 Each review carries `rating`, `title`, `text`, `author`, `date` and
 `verifiedPurchase`.
 
-> **No A+ content field.** Noon has no Amazon-style A+ module — every PDP uses
+> **No A+ content.** Noon has no Amazon-style A+ module — every PDP uses
 > the same fixed template and sellers cannot inject rich-media blocks — so
-> nothing equivalent is collected or sent.
+> `aplus_content` is always sent as `null`.
 
 ## Notes for whoever maintains this
 
@@ -185,7 +182,7 @@ Each review carries `rating`, `title`, `text`, `author`, `date` and
 
 ```
 src/
-  index.ts          orchestrator: profile loop -> query loop -> scrape -> POST
+  index.ts          orchestrator: store ids -> queue (all pages) -> scrape -> POST
   config.ts         env + defaults
   browser.ts        persistent Chrome context (+ the evaluate shim)
   marketplaces.ts   short code -> locale/city/currency
@@ -198,10 +195,6 @@ src/
   userSettings.ts   load/save user-settings.json
   firstRun.ts       first-launch settings form + Noon login
   api/              fetchQueries / postScrapedResult
-mock-server/
-  server.ts         stand-in API
-  queries.json      seed work list
-  received/         POSTed results land here
 ```
 
 `PLAN.md` records the design and the live recon it was based on.

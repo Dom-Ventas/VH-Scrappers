@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { Page } from 'playwright';
-import { saveUserSettings } from './userSettings';
+import { parseStoreIds, saveUserSettings } from './userSettings';
 import { UserSettings } from './types';
 import { config } from './config';
 
@@ -19,20 +19,18 @@ function loadFirstRunHtml(): string {
     <h2>Flipkart Search Term Scrapper — First Launch</h2>
     <form id="f">
       <p><label>Email ID <input id="emailId" required /></label></p>
-      <p><label>Profile IDs (one per line) <textarea id="profileIds" rows="4" required></textarea></label></p>
+      <p><label>Store IDs (one per line or comma-separated, digits only) <textarea id="storeIds" rows="4" required></textarea></label></p>
       <p><button type="submit">Save</button></p>
+      <p id="status"></p>
     </form>
     <script>
       document.getElementById('f').addEventListener('submit', async (e) => {
         e.preventDefault();
-        const profileIds = document.getElementById('profileIds').value
-          .split(/[\\n,]+/)
-          .map((s) => s.trim())
-          .filter(Boolean);
-        await window.__saveUserSettings({
+        const res = await window.__saveUserSettings({
           emailId: document.getElementById('emailId').value.trim(),
-          profileIds,
+          storeIds: document.getElementById('storeIds').value,
         });
+        document.getElementById('status').textContent = res.ok ? 'Saved.' : res.error;
       });
     </script>
   </body></html>`;
@@ -46,26 +44,30 @@ export async function runFirstLaunchFlow(page: Page): Promise<UserSettings> {
     resolveSettings = resolve;
   });
 
+  // The page passes the store ids as typed; they are validated here so the
+  // HTML form and the inline fallback share one rule, and the error goes back
+  // to the page to show.
   await page.exposeFunction(
     '__saveUserSettings',
-    (data: { emailId: string; profileIds: string[] }) => {
-      const profileIds = (data.profileIds || [])
-        .map((p) => String(p).trim())
-        .filter(Boolean);
-      if (profileIds.length === 0) {
-        console.warn('[FIRST-RUN] No profile IDs provided — ignoring submission.');
-        return;
+    (data: { emailId: string; storeIds: string }): { ok: boolean; error?: string } => {
+      const emailId = String(data.emailId || '').trim();
+      if (!emailId) return { ok: false, error: 'Please enter an Email ID.' };
+      const parsed = parseStoreIds(String(data.storeIds || ''));
+      if ('error' in parsed) return { ok: false, error: parsed.error };
+      if (parsed.storeIds.length === 0) {
+        return { ok: false, error: 'Please enter at least one Store ID.' };
       }
       const settings: UserSettings = {
-        emailId: data.emailId,
-        profileIds,
+        emailId,
+        storeIds: parsed.storeIds,
         firstRunCompletedAt: new Date().toISOString(),
       };
       saveUserSettings(settings);
       console.log(
-        `[FIRST-RUN] Settings saved: emailId="${settings.emailId}" profileIds=[${settings.profileIds.join(', ')}]`,
+        `[FIRST-RUN] Settings saved: emailId="${settings.emailId}" storeIds=[${settings.storeIds.join(', ')}]`,
       );
       resolveSettings(settings);
+      return { ok: true };
     },
   );
 

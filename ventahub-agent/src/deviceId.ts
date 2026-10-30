@@ -14,7 +14,7 @@ import { randomUUID } from 'crypto';
  * constant. One laptop runs one agent per marketplace and each needs its own
  * identity: a shared path would hand all of them the same deviceId, so they
  * would collide on a single `app_scraper_device` row, be served the same
- * assignment, and overwrite each other's last_seen and profileIds.
+ * assignment, and overwrite each other's last_seen.
  *
  * Deriving it from `path.basename(homeDir)` keeps the amazon agent's path
  * byte-identical to what it has always been (`…\VentaHubAgent\device.id`), so

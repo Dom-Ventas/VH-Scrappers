@@ -14,12 +14,18 @@ differences are called out in the last three sections.
    npx playwright install-deps
    cp .env.example .env
    ```
-4. Edit `.env` and fill in `QUERIES_API_URL`, `RESULTS_API_URL`, `API_TOKEN`.
-   They ship blank in `.env.example` — with `QUERIES_API_URL` blank the scrapper
-   runs against two built-in sample queries, and with `RESULTS_API_URL` blank the
-   POST step throws.
+4. Edit `.env` and set `VH_API_ROOT` (the VentaWiz server root), `VW_AUTH_URL`
+   (the VentaWiz auth service root) and the service account `VW_CLIENT_ID`
+   (`svc_…`) / `VW_CLIENT_SECRET` (`vws_…`) — ask a VentaWiz admin for one with
+   `scrapper:run`. The endpoint URLs default to `${VH_API_ROOT}/v1/scrapper/search-term-queries`
+   and `…/search-term-results`; `QUERIES_API_URL` / `RESULTS_API_URL` override
+   them.
 
 ## Testing end to end (one command)
+
+> **Currently broken:** `mock/server.ts` and `mock/queries.json` were never
+> committed, so `npm run mock` and `npm run dev-api` fail until a mock is added
+> back. `scripts/dev-api.ts` already targets the VentaWiz paths below.
 
 ```
 npm run dev-api
@@ -32,8 +38,9 @@ works after a change.
 It stays out of your way: the Chrome profile goes to `.dev-profile/`, not your
 real `%LOCALAPPDATA%` one, so your saved noon login and onboarding state are
 untouched. `user-settings.json` is seeded there so the run never stops at the
-first-launch form, and the API URLs/token are passed as env vars that override
-`.env` for that run only.
+first-launch form, and the API URLs, `VW_AUTH_URL` (the mock itself) and a
+dummy service account (`svc_dev` / `vws_dev`) are passed as env vars that
+override `.env` for that run only.
 
 Change which keywords get scraped by editing `mock/queries.json`.
 
@@ -49,21 +56,21 @@ Use this when you want the scraper to behave exactly as in production
 
 | Route | Purpose |
 | --- | --- |
-| `GET  /backend/api/v1/scrapper/queries?profile_id=PRF-001` | Serves the seed list from `mock/queries.json` |
-| `POST /backend/api/v1/scrapper/results` | Validates + stores a scraped result |
-| `GET  /backend/api/v1/scrapper/results` | Everything received this session |
+| `GET  /v1/scrapper/search-term-queries?store_id=13&marketplace=noon&page=1&limit=100` | Serves the seed list from `mock/queries.json` |
+| `POST /v1/scrapper/search-term-results` | Validates + stores a scraped result |
+| `POST /v1/token` | Fake service-account exchange: any `svc_…` / `vws_…` pair gets a token, anything else 401 `invalid_client` |
 | `GET  /health` | Liveness |
 
-Bearer token is `dummy-local-token` (override with `MOCK_API_TOKEN`); requests
-without it get a 401.
+Any `Authorization: Bearer …` is accepted (tokens are not verified); requests
+without one get a 401. For `npm run dev` against the mock, set
+`VW_AUTH_URL=http://127.0.0.1:8787` and any `svc_…` / `vws_…` pair in `.env`.
 
 Edit `mock/queries.json` to change which keywords get scraped — it's re-read per
-request, so no restart needed. It seeds a single profile holding every keyword.
-Accepted results are written to `mock/received/<profileId>_<queryId>.json`.
+request, so no restart needed. It is keyed by store id. Accepted results are
+written to `mock/received/`.
 
-The POST handler **validates the ScrapedResult contract** and returns 400 with a
-list of violations if the payload drifts — missing keys, unexpected keys, wrong
-types, or more than 10 products. That way a schema regression fails loudly here
+The POST handler should **validate the ScrapedResult contract** and return 4xx
+with a list of violations if the payload drifts. That way a schema regression fails loudly here
 instead of silently reaching production.
 
 Pointing at the real backend is a host swap in `.env`; the paths already match
@@ -75,8 +82,8 @@ production.
 npm run dev
 ```
 
-- On the very first run, a Chrome window opens showing the Email ID / Profile
-  ID form. Fill it in and click **Save and continue**.
+- On the very first run, a Chrome window opens showing the Email ID / Store
+  IDs form (store ids are positive integers). Fill it in and click **Save and continue**.
 - Chrome then navigates to noon. Sign in once and set your delivery address.
   **Do not skip the address** — noon only renders a dated delivery estimate
   ("Get it by 27 Aug") once an address is resolved for the session. Without one
@@ -123,26 +130,24 @@ onboarding form again.
 
 ---
 
-## Payload contract: one deliberate difference from the sibling scrappers
+## Payload contract (VentaWiz)
 
-The `ScrapedResult` posted to the backend is identical to the Amazon and
-Flipkart scrappers' — same top-level keys, same nine per-product keys, same
-types — **except for the product identifier**:
+One `POST /v1/scrapper/search-term-results` per search term:
 
-| Scrapper | Key | Value it carries |
-| --- | --- | --- |
-| Amazon | `asin` | ASIN |
-| Flipkart | `asin` | Flipkart PID |
-| **noon** | **`sku`** | **noon SKU** (`N70034197V`, `Z38F7F87F384F17FD4824Z`) |
+```json
+{ "store_id": 13, "search_term": "protein powder",
+  "products": [ { "position": 1, "mp_product_id": "N70034197V", "is_sponsored": true,
+                  "price": "AED 165.30", "rating": 4.3, "review_count": 812,
+                  "delivery_days": 1, "title": "..." } ] }
+```
 
-"ASIN" is an Amazon term that means nothing on noon, so this scrapper names the
-field for what it actually holds. **The backend needs a noon-specific mapping
-for this key** — or the other two scrappers need the same rename — otherwise the
-identifier column lands NULL on every noon row.
-
-`mock/server.ts` enforces this: it 400s on a payload containing `asin`, so a
-drift back to the old key fails loudly in dev instead of silently reaching
-production.
+- `search_term` is sent exactly as the queue handed it out.
+- noon's SKU (`N70034197V`, `Z38F7F87F384F17FD4824Z`) goes out as
+  `mp_product_id`, the same key the Amazon and Flipkart scrappers use.
+- Up to 5 sponsored + 5 organic, in page order; cards without a SKU are dropped.
+- Missing values are `null`, never 0 / -1. An empty `products` is still posted.
+- A 409 means the term was already scraped today for that store and is logged
+  as `[OK] … (already stored today)`.
 
 ## Storefronts: the short code picks the country
 
@@ -158,10 +163,11 @@ country's catalogue and currency, so it is resolved from the backend's
 | `NNSA` | `saudi-en` | SAR |
 
 **Short codes come from the backend's marketplace table — they are not ours to
-invent.** The launcher passes the same strings through as a `SCRAPE_SHORT_CODES`
-filter, so if this table and the DB disagree the run fails *silently and
-totally*: the filter matches nothing, every query is dropped, and the scrapper
-reports success having scraped zero keywords. Noon runs an Egypt storefront on
+invent.** Each queue item carries its own `short_code`; a code missing from this
+table fails that term with an error naming the known codes. The optional
+`SCRAPE_SHORT_CODES` filter is matched against the same strings, so if it and the
+DB disagree the filter matches nothing and the scrapper logs a `SHORT CODE
+MISMATCH` error. Noon runs an Egypt storefront on
 the web, but there is no marketplace row for it, so there is no code for it
 here — add one only when the DB does.
 

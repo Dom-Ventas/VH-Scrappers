@@ -36,12 +36,10 @@ export interface MarketplaceConfig {
 
 /**
  * Short codes are NOT ours to invent — they are primary keys from the backend's
- * marketplace table, and the launcher passes the same strings through as a
- * filter. If this map and the DB disagree, the failure is silent and total: the
- * launcher hands the child a SCRAPE_SHORT_CODES filter that matches nothing, so
- * every query is filtered out and the run reports success having scraped zero
- * keywords. (That is exactly what "NOAE/NOSA/NOEG" caused — invented codes that
- * no marketplace row uses.)
+ * marketplace table, and every queue item carries one. If this map and the DB
+ * disagree, every term for that storefront fails with "Unknown short_code".
+ * (Invented codes like "NOAE/NOSA/NOEG", which no marketplace row uses, once
+ * made a SCRAPE_SHORT_CODES filter silently drop every query.)
  *
  * The real codes are `NN`-prefixed. Noon runs an Egypt storefront on the web,
  * but there is no marketplace row for it, so there is no code to add here —

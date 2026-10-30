@@ -10,10 +10,13 @@
    npx playwright install-deps
    cp .env.example .env
    ```
-4. Edit `.env` and fill in `QUERIES_API_URL`, `RESULTS_API_URL`, `API_TOKEN`.
-   They ship blank — with `QUERIES_API_URL` blank the scrapper runs against two
-   built-in sample queries, and with `RESULTS_API_URL` blank the POST step
-   throws.
+4. Edit `.env` and fill in `VH_API_ROOT` (the VentaWiz server root),
+   `VW_AUTH_URL` (the VentaWiz auth service root) and the service account
+   `VW_CLIENT_ID` (`svc_…`) / `VW_CLIENT_SECRET` (`vws_…`) — ask a VentaWiz
+   admin for one with `scrapper:run`. The queue and results URLs default to
+   `<VH_API_ROOT>/v1/scrapper/search-term-queries` and
+   `.../search-term-results`; set `QUERIES_API_URL` / `RESULTS_API_URL` only to
+   override them.
 
 ## Testing end to end (one command)
 
@@ -28,10 +31,11 @@ works after a change.
 It stays out of your way: the Chrome profile goes to `.dev-profile/`, not your
 real `%LOCALAPPDATA%` one, so your saved Flipkart login and onboarding state are
 untouched. `user-settings.json` is seeded there so the run never stops at the
-first-launch form, and the API URLs/token are passed as env vars that override
-`.env` for that run only.
+first-launch form, and the API URLs, `VW_AUTH_URL` (the mock itself) and a
+dummy service account (`svc_dev` / `vws_dev`) are passed as env vars that
+override `.env` for that run only.
 
-Change which keywords get scraped by editing `mock/queries.json`.
+Change which search terms get scraped by editing `mock/queries.json`.
 
 ## Running the mock backend on its own
 
@@ -45,22 +49,26 @@ Use this when you want the scraper to behave exactly as in production
 
 | Route | Purpose |
 | --- | --- |
-| `GET  /backend/api/v1/scrapper/queries?profile_id=PRF-001` | Serves the seed list from `mock/queries.json` |
-| `POST /backend/api/v1/scrapper/results` | Validates + stores a scraped result |
-| `GET  /backend/api/v1/scrapper/results` | Everything received this session |
+| `GET  /v1/scrapper/search-term-queries?store_id=13&marketplace=flipkart` | Serves the paginated seed list from `mock/queries.json` |
+| `POST /v1/scrapper/search-term-results` | Validates + stores a scraped result (409 on a repeat) |
+| `GET  /v1/scrapper/search-term-results` | Everything received this session |
+| `POST /v1/token` | Fake service-account exchange: any `svc_…` / `vws_…` pair gets a token, anything else 401 `invalid_client` |
 | `GET  /health` | Liveness |
 
-Bearer token is `dummy-local-token` (override with `MOCK_API_TOKEN`); requests
-without it get a 401.
+Any `Authorization: Bearer …` is accepted (tokens are not verified); requests
+without one get a 401. For `npm run dev` against the mock, set
+`VW_AUTH_URL=http://127.0.0.1:8787` and any `svc_…` / `vws_…` pair in `.env`.
 
-Edit `mock/queries.json` to change which keywords get scraped — it's re-read per
-request, so no restart needed. It seeds a single profile, `PRF-001`, holding
-every keyword. Accepted results are written to
-`mock/received/<profileId>_<queryId>.json`.
+Edit `mock/queries.json` to change which search terms get scraped — it's
+re-read per request, so no restart needed. It is a list of queue items
+(`{ store_id, short_code, search_term }`) for store `13`. Accepted results are
+written to `mock/received/<store_id>_<search_term>.json`, and a term already
+stored this session is left out of the queue, as the real backend does for
+today.
 
-The POST handler **validates the ScrapedResult contract** and returns 400 with a
-list of violations if the payload drifts — missing keys, unexpected keys, wrong
-types, or more than 10 products. That way a schema regression fails loudly here
+The POST handler **validates the search-term result contract** and returns 422
+with a list of violations if the payload drifts — missing keys, unexpected
+keys, wrong types or ranges, or more than 60 products. That way a schema regression fails loudly here
 instead of silently reaching production.
 
 Pointing at the real backend is a host swap in `.env`; the paths already match
@@ -72,8 +80,8 @@ production.
 npm run dev
 ```
 
-- On the very first run, a Chrome window opens showing the Email ID / Profile
-  ID form. Fill it in and click **Save and continue**.
+- On the very first run, a Chrome window opens showing the Email ID / Store
+  IDs form (VentaWiz store ids, whole numbers). Fill it in and click **Save and continue**.
 - Chrome then navigates to Flipkart. Sign in once and set your delivery pincode.
   Signing in also stops the login modal from covering the search grid later.
 - Close the Flipkart tab when done — the scraper will continue automatically.

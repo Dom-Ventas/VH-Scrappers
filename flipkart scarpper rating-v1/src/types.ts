@@ -1,8 +1,11 @@
+/** One product page to scrape, as the VentaWiz review queue hands it out. */
 export interface Query {
-  productId: number;
-  /** Flipkart PID — the ASIN equivalent, e.g. "MOBGTAGPTB3VS24W". */
+  /** Every focused listing this page answers for — posted back verbatim. */
+  productIds: number[];
+  /** Flipkart PID/FSN (queue `mp_product_id`), e.g. "MOBGTAGPTB3VS24W". */
   pid: string;
   shortCode: string;
+  storeId: number;
 }
 
 export interface Review {
@@ -47,30 +50,25 @@ export interface ProductReviewResult {
   pincodeApplied?: boolean | null;
 }
 
+/** Body of POST /v1/scrapper/reviews — one per queue item. */
 export interface ScrapedResult {
-  emailId: string;
-  profileId: string;
-  productId: number;
-  pid: string;
-  shortCode: string;
-  rating: number;
-  ratingCount: number;
-  criticalReviews: Record<string, any>;
-  aplus_content?: "yes" | "no";
-  aplusContent?: "yes" | "no";
+  store_id: number;
+  /** Copied verbatim from the queue item. */
+  product_ids: number[];
+  /** 0–5, at most two decimals; null when the page shows no average. */
+  rating: number | null;
+  rating_count: number | null;
+  critical_reviews: { reviews: Review[] } | null;
+  aplus_content: "yes" | "no" | null;
   /** Promised delivery date minus today, in whole days. null when not readable. */
-  delivery_promise_days?: number | null;
-  deliveryPromiseDays?: number | null;
+  delivery_promise_days: number | null;
+  /** Flipkart-only extra; the backend ignores it. */
   pincode_applied?: boolean | null;
-  pincodeApplied?: boolean | null;
 }
 
 export interface UserSettings {
   emailId: string;
-  profileIds: string[];
+  /** VentaWiz store ids (positive integers). */
+  storeIds: number[];
   firstRunCompletedAt: string;
 }
-// The delivery pincode is deliberately not stored here. It is set by the user
-// on Flipkart during first-run login and lives in the Chrome profile, because
-// that is the only place it takes effect (see firstRun.ts). Whether it is still
-// applied is checked per scrape and reported as `pincodeApplied`.

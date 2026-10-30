@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { userSettingsPath, config } from './config';
+import { userSettingsPath, parseStoreIds } from './config';
 import { UserSettings } from './types';
 
 export function loadUserSettings(): UserSettings | null {
@@ -8,22 +8,19 @@ export function loadUserSettings(): UserSettings | null {
   if (!fs.existsSync(filePath)) return null;
   try {
     const raw = fs.readFileSync(filePath, 'utf-8');
-    const parsed = JSON.parse(raw) as Partial<UserSettings> & { profileId?: string };
+    const parsed = JSON.parse(raw) as Partial<UserSettings>;
     if (!parsed.emailId) return null;
 
-    // Support both the new `profileIds: string[]` shape and the legacy
-    // `profileId: string` shape so older settings files keep working.
-    let profileIds: string[] = [];
-    if (Array.isArray(parsed.profileIds)) {
-      profileIds = parsed.profileIds.map((p) => String(p).trim()).filter(Boolean);
-    } else if (typeof parsed.profileId === 'string' && parsed.profileId.trim()) {
-      profileIds = [parsed.profileId.trim()];
-    }
-    if (profileIds.length === 0) return null;
+    // Only `storeIds` counts. A legacy VentaHub file with just `profileIds` /
+    // `profileId` is treated as "no settings": those were AMS profile ids, not
+    // VentaWiz store ids, so a standalone run shows the first-run form again.
+    if (!Array.isArray(parsed.storeIds)) return null;
+    const { ids: storeIds } = parseStoreIds(parsed.storeIds);
+    if (storeIds.length === 0) return null;
 
     return {
       emailId: parsed.emailId,
-      profileIds,
+      storeIds,
       firstRunCompletedAt: parsed.firstRunCompletedAt || new Date().toISOString(),
     };
   } catch {

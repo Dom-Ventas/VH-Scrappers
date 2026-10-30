@@ -6,6 +6,7 @@ import {
 import { extractPincodeApplied } from './extractors';
 
 import {
+  parseStoreIds,
   saveUserSettings
 } from './userSettings';
 
@@ -150,25 +151,43 @@ export async function runFirstLaunchFlow(
       }
     );
 
+  // The page passes the store ids as typed; they are validated here and any
+  // error goes back to the page to show.
   await page.exposeFunction(
     '__saveUserSettings',
     async (
       data: {
         emailId: string;
-        profileIds: string[];
+        storeIds: string;
       }
-    ) => {
+    ): Promise<{ ok: boolean; error?: string }> => {
+
+      const emailId =
+        String(data.emailId || '').trim();
+
+      if (!emailId) {
+        return { ok: false, error: 'Please enter your email.' };
+      }
+
+      const parsed =
+        parseStoreIds(
+          String(data.storeIds || '')
+        );
+
+      if ('error' in parsed) {
+        return { ok: false, error: parsed.error };
+      }
+
+      if (parsed.storeIds.length === 0) {
+        return { ok: false, error: 'Please enter at least one store ID.' };
+      }
+
       const settings: UserSettings =
         {
-          emailId:
-            data.emailId.trim(),
+          emailId,
 
-          profileIds:
-            data.profileIds
-              .map(v =>
-                v.trim()
-              )
-              .filter(Boolean),
+          storeIds:
+            parsed.storeIds,
 
           firstRunCompletedAt:
             new Date().toISOString()
@@ -179,10 +198,12 @@ export async function runFirstLaunchFlow(
       );
 
       console.log(
-        '[FIRST-RUN] Settings saved'
+        `[FIRST-RUN] Settings saved: storeIds=[${settings.storeIds.join(', ')}]`
       );
 
       resolver(settings);
+
+      return { ok: true };
     }
   );
 
@@ -301,9 +322,10 @@ export async function runFirstLaunchFlow(
 </div>
 
 <div class="field">
-<label for="profiles">Profile IDs</label>
-<textarea id="profiles" placeholder="One per line, or comma separated"></textarea>
-<p class="hint">The scraper fetches a product list for each profile ID.</p>
+<label for="stores">Store IDs</label>
+<textarea id="stores" placeholder="One per line, or comma separated — e.g. 13"></textarea>
+<p class="hint">VentaWiz store IDs, digits only. The scraper fetches the products due for each store.</p>
+<p class="hint" id="status" style="color:#b42318"></p>
 </div>
 
 <button type="submit">Save and continue</button>
@@ -341,22 +363,23 @@ document
 
 e.preventDefault();
 
-const profileIds =
-document
-.getElementById('profiles')
-.value
-.split(/[\\n,]+/)
-.map(v => v.trim())
-.filter(Boolean);
-
+const res =
 await window
 .__saveUserSettings({
 emailId:
 document
 .getElementById('email')
 .value,
-profileIds
+storeIds:
+document
+.getElementById('stores')
+.value
 });
+
+document
+.getElementById('status')
+.textContent =
+res && res.ok ? '' : (res && res.error) || 'Could not save.';
 });
 </script>
 

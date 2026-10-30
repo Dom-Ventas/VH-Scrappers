@@ -1,9 +1,12 @@
 name: Build Windows Agent
 
-# Builds the three Windows exes (launcher + both scrapers) and publishes them
-# as a downloadable GitHub Release. The scrapper token is baked into the
-# launcher exe from the SCRAPPER_API_TOKEN repo secret at build time, so the
-# released exe is self-contained — no .env needed on employee laptops.
+# Builds all nine Windows exes (three launchers + six scrapers) and publishes
+# them as a downloadable GitHub Release. No secret is baked into any exe: each
+# laptop's agent is given its own VentaWiz service account (client id +
+# secret) on first run and hands it to the scrapers it launches. Only the two
+# public hosts are baked in, from repository variables:
+#   VH_API_ROOT  - the VentaWiz API root
+#   VW_AUTH_URL  - the VentaWiz auth service root (service-account token exchange)
 #
 # Run it: Actions tab -> "Build Windows Agent" -> Run workflow (pick a tag).
 
@@ -35,37 +38,67 @@ jobs:
       # Builds all three launcher exes from one codebase. They differ only by
       # EMBEDDED_AGENT_KIND, which each build:exe:* script sets before packaging.
       #
-      # The token is injected with sed on its own line, NOT by regenerating
+      # The hosts are injected with sed on their own lines, NOT by regenerating
       # embedded.ts. A regenerate-the-file approach (what this step used to do)
       # silently drops every other constant in the file — including
       # EMBEDDED_AGENT_KIND, which would make all three exes identify as the
       # Amazon agent and collide on one device row.
-      - name: Build launchers (token baked from secret)
+      #
+      # The VentaWiz host comes from the VH_API_ROOT repository variable and the
+      # auth host from VW_AUTH_URL. The committed values are
+      # http://localhost:8000 / :8100, so a release without them would ship
+      # exes that call the laptop itself — fail instead.
+      - name: Build launchers (API and auth roots baked in)
         working-directory: ventahub-agent
         env:
-          TOKEN: ${{ secrets.SCRAPPER_API_TOKEN }}
+          API_ROOT: ${{ vars.VH_API_ROOT }}
+          AUTH_ROOT: ${{ vars.VW_AUTH_URL }}
         run: |
+          [ -n "$API_ROOT" ] || { echo "set the VH_API_ROOT repository variable to the VentaWiz host"; exit 1; }
+          [ -n "$AUTH_ROOT" ] || { echo "set the VW_AUTH_URL repository variable to the VentaWiz auth host"; exit 1; }
+          API_ROOT="${API_ROOT%/}"
+          AUTH_ROOT="${AUTH_ROOT%/}"
           npm install --no-audit --no-fund
-          sed -i "s|^export const EMBEDDED_TOKEN = .*|export const EMBEDDED_TOKEN = '${TOKEN}';|" src/embedded.ts
-          grep -q "EMBEDDED_TOKEN = '.\+'" src/embedded.ts || { echo "token injection failed"; exit 1; }
+          sed -i "s|^export const EMBEDDED_API_ROOT = .*|export const EMBEDDED_API_ROOT = '${API_ROOT}';|" src/embedded.ts
+          grep -qF "EMBEDDED_API_ROOT = '${API_ROOT}'" src/embedded.ts || { echo "api root injection failed"; exit 1; }
+          sed -i "s|^export const EMBEDDED_AUTH_ROOT = .*|export const EMBEDDED_AUTH_ROOT = '${AUTH_ROOT}';|" src/embedded.ts
+          grep -qF "EMBEDDED_AUTH_ROOT = '${AUTH_ROOT}'" src/embedded.ts || { echo "auth root injection failed"; exit 1; }
           npm run build:exe:all
 
-      - name: Build Amazon scrapers
+      # Every scraper carries the same two host constants as the launcher:
+      # EMBEDDED_API_ROOT (from VH_API_ROOT) and EMBEDDED_AUTH_ROOT (from
+      # VW_AUTH_URL), both injected here. Still no secret.
+      #
+      # The agent overrides QUERIES_API_URL / RESULTS_API_URL / VW_AUTH_URL and
+      # passes VW_CLIENT_ID / VW_CLIENT_SECRET at launch — these baked values
+      # are the fallback that makes a scraper exe work when run on its own
+      # (with the service account in a .env beside it).
+      - name: Build scrapers (API and auth roots baked in)
+        env:
+          API_ROOT: ${{ vars.VH_API_ROOT }}
+          AUTH_ROOT: ${{ vars.VW_AUTH_URL }}
         run: |
-          for d in amazon-ads-scraper rating-scraper; do
-            (cd "$d" && npm install --no-audit --no-fund && npm run build:exe)
-          done
-
-      - name: Build Flipkart scrapers
-        run: |
-          for d in "flipkart ads scarpper-v1" "flipkart scarpper rating-v1"; do
-            (cd "$d" && npm install --no-audit --no-fund && npm run build:exe)
-          done
-
-      - name: Build noon scrapers
-        run: |
-          for d in "noon ads scrapper-v1" "noon review scrapper-v1"; do
-            (cd "$d" && npm install --no-audit --no-fund && npm run build:exe)
+          [ -n "$API_ROOT" ] || { echo "set the VH_API_ROOT repository variable to the VentaWiz host"; exit 1; }
+          [ -n "$AUTH_ROOT" ] || { echo "set the VW_AUTH_URL repository variable to the VentaWiz auth host"; exit 1; }
+          API_ROOT="${API_ROOT%/}"
+          AUTH_ROOT="${AUTH_ROOT%/}"
+          for d in amazon-ads-scraper \
+                   rating-scraper \
+                   "flipkart ads scarpper-v1" \
+                   "flipkart scarpper rating-v1" \
+                   "noon ads scrapper-v1" \
+                   "noon review scrapper-v1"; do
+            echo "::group::$d"
+            (
+              cd "$d"
+              sed -i "s|^export const EMBEDDED_API_ROOT = .*|export const EMBEDDED_API_ROOT = '${API_ROOT}';|" src/embedded.ts
+              grep -qF "EMBEDDED_API_ROOT = '${API_ROOT}'" src/embedded.ts || { echo "api root injection failed in $d"; exit 1; }
+              sed -i "s|^export const EMBEDDED_AUTH_ROOT = .*|export const EMBEDDED_AUTH_ROOT = '${AUTH_ROOT}';|" src/embedded.ts
+              grep -qF "EMBEDDED_AUTH_ROOT = '${AUTH_ROOT}'" src/embedded.ts || { echo "auth root injection failed in $d"; exit 1; }
+              npm install --no-audit --no-fund
+              npm run build:exe
+            )
+            echo "::endgroup::"
           done
 
       - name: Collect release files
@@ -89,7 +122,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          NOTES=$'Windows scraper agent bundle — one agent per marketplace.\n\nInstall ONLY the agents a laptop needs. Each has its own browser profile, device id and schedule, so they run independently and can share one folder.\n\nSetup on a laptop:\n1. Copy the files you need into one folder (e.g. C:\\VentaHub).\n2. Double-click the agent exe once — enter email + profile IDs, sign in to that marketplace, close the tab. Repeat per agent installed.\n3. Right-click the matching register-task*.ps1 -> Run with PowerShell.\n\nAmazon:   VentaHubAgent.exe + search-term-scrapper.exe + AmazonReviewScrapper.exe + register-task.ps1\nFlipkart: VentaHubAgentFlipkart.exe + flipkart-search-term-scrapper.exe + FlipkartReviewScrapper.exe + register-task-flipkart.ps1\nnoon:     VentaHubAgentNoon.exe + noon-search-term-scrapper.exe + noon-review-scrapper.exe + register-task-noon.ps1\n\nRequires Google Chrome installed. The token is baked into the exe; no .env needed.'
+          NOTES=$'Windows scraper agent bundle — one agent per marketplace.\n\nInstall ONLY the agents a laptop needs. Each has its own browser profile, device id and schedule, so they run independently and can share one folder.\n\nSetup on a laptop:\n1. Copy the files you need into one folder (e.g. C:\\VentaHub).\n2. Double-click the agent exe once — enter email, store IDs and the VentaWiz service account (client ID svc_… + client secret vws_…, from your VentaWiz admin), sign in to that marketplace, close the tab. Repeat per agent installed.\n3. Right-click the matching register-task*.ps1 -> Run with PowerShell.\n\nAmazon:   VentaHubAgent.exe + search-term-scrapper.exe + AmazonReviewScrapper.exe + register-task.ps1\nFlipkart: VentaHubAgentFlipkart.exe + flipkart-search-term-scrapper.exe + FlipkartReviewScrapper.exe + register-task-flipkart.ps1\nnoon:     VentaHubAgentNoon.exe + noon-search-term-scrapper.exe + noon-review-scrapper.exe + register-task-noon.ps1\n\nRequires Google Chrome installed. No secret ships in any exe; no .env needed — the service account entered at setup is stored per user on the laptop.'
           if gh release view "${{ inputs.release_tag }}" >/dev/null 2>&1; then
             gh release upload "${{ inputs.release_tag }}" out/* --clobber
           else

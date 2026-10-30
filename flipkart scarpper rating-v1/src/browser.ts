@@ -1,5 +1,6 @@
 import * as fs from 'fs';
-import { chromium, BrowserContext } from 'playwright';
+import { BrowserContext } from 'playwright';
+import { launchChrome } from './chromeProfile';
 import { config } from './config';
 
 export async function openPersistentContext(
@@ -55,45 +56,24 @@ export async function openPersistentContext(
       ? null
       : { width: 1920, height: 1080 };
 
-  let context: BrowserContext;
+  const context = await launchChrome(
+    config.profileDir,
+    {
+      headless: !visible,
 
-  try {
-    context = await chromium.launchPersistentContext(
-      config.profileDir,
-      {
-        headless: !visible,
+      channel:
+        config.chromeChannel,
 
-        channel:
-          config.chromeChannel,
+      viewport,
 
-        viewport,
+      userAgent: desktopUserAgent,
 
-        userAgent: desktopUserAgent,
-
-        args: [
-          ...windowArgs,
-          '--disable-blink-features=AutomationControlled'
-        ]
-      }
-    );
-  } catch (err) {
-    console.log('[BROWSER] System Chrome channel launch failed, using bundled browser fallback...');
-    context = await chromium.launchPersistentContext(
-      config.profileDir,
-      {
-        headless: !visible,
-
-        viewport,
-
-        userAgent: desktopUserAgent,
-
-        args: [
-          ...windowArgs,
-          '--disable-blink-features=AutomationControlled'
-        ]
-      }
-    );
-  }
+      args: [
+        ...windowArgs,
+        '--disable-blink-features=AutomationControlled'
+      ]
+    }
+  );
 
   context.setDefaultNavigationTimeout(
     config.navigationTimeoutMs
