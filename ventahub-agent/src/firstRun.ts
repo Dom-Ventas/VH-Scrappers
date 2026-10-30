@@ -1,9 +1,13 @@
 import * as fs from 'fs';
+import * as os from 'os';
 import * as path from 'path';
 import { chromium } from 'playwright';
 import { config } from './config';
+import { checkin } from './api';
+import { AuthError, useServiceAccount } from './auth';
 import { AgentConfig } from './types';
 import { getOrCreateDeviceId } from './deviceId';
+import { signInSites } from './sites';
 
 /** The backend accepts 1–50 store ids on a check-in. */
 const MAX_STORE_IDS = 50;
@@ -178,26 +182,48 @@ export async function runFirstLaunch(): Promise<AgentConfig> {
   // Client id only — the secret is never logged.
   console.log(`[FIRST-RUN] service account: ${form.clientId}`);
 
-  console.log(
-    `[FIRST-RUN] Sign in to ${config.firstRunDomain} and set your delivery ` +
-      'address/pincode, then close the tab',
-  );
-  await page.goto(`https://${config.firstRunDomain}`, {
-    waitUntil: 'domcontentloaded',
-  });
+  // Ask the backend which marketplace each store is on, so the employee signs in
+  // to every site the scrapers will open (amazon.ae for a UAE store, amazon.in
+  // for an Indian one) rather than one fixed country. This is also the first
+  // check-in: a wrong store id or credential fails here, before anything is saved.
+  const deviceId = getOrCreateDeviceId(config.home);
+  let sites: string[];
+  try {
+    sites = await sitesForStores(deviceId, form);
+  } catch (err) {
+    await context.close();
+    throw err;
+  }
 
+  console.log(
+    `[FIRST-RUN] Sign in to ${sites.join(', ')} and set your delivery ` +
+      'address/pincode on each, then close the tabs',
+  );
+  const tabs = [page];
+  for (let i = 1; i < sites.length; i++) tabs.push(await context.newPage());
+  await Promise.all(
+    tabs.map((tab, i) => tab.goto(`https://${sites[i]}`, { waitUntil: 'domcontentloaded' })),
+  );
+
+  // Done when every sign-in tab is closed, or after ten minutes.
   await new Promise((resolve) => {
     const timeout = setTimeout(resolve, 10 * 60 * 1000);
-    page.once('close', () => {
-      clearTimeout(timeout);
-      resolve(null);
-    });
+    let open = tabs.length;
+    for (const tab of tabs) {
+      tab.once('close', () => {
+        open -= 1;
+        if (open === 0) {
+          clearTimeout(timeout);
+          resolve(null);
+        }
+      });
+    }
   });
 
   await context.close();
 
   const cfg: AgentConfig = {
-    deviceId: getOrCreateDeviceId(config.home),
+    deviceId,
     emailId: form.emailId,
     storeIds: form.storeIds,
     clientId: form.clientId,
@@ -207,6 +233,62 @@ export async function runFirstLaunch(): Promise<AgentConfig> {
   saveAgentConfig(cfg);
   console.log('[FIRST-RUN] Setup complete');
   return cfg;
+}
+
+/**
+ * The sites to sign in to for the stores just entered, from a check-in.
+ *
+ * Credentials or stores the backend refuses abort the setup with the reason.
+ * An unreachable backend falls back to this agent kind's default site with a
+ * warning: the setup can still be saved, and the next cycle checks in anyway.
+ */
+async function sitesForStores(deviceId: string, form: SetupForm): Promise<string[]> {
+  useServiceAccount({ clientId: form.clientId, clientSecret: form.clientSecret });
+  let stores;
+  try {
+    const resp = await checkin({
+      device_id: deviceId,
+      agent_kind: config.agentKind,
+      store_ids: form.storeIds,
+      email: form.emailId,
+      hostname: os.hostname(),
+      os: `${os.type()} ${os.release()}`,
+      agent_version: config.agentVersion,
+    });
+    stores = resp.stores;
+  } catch (err) {
+    const message = (err as Error).message;
+    if (err instanceof AuthError) {
+      throw new Error(`Setup incomplete: the service account was refused — ${message}`);
+    }
+    if (/^checkin 4\d\d/.test(message)) {
+      throw new Error(
+        `Setup incomplete: the backend refused these store IDs for a ${config.agentKind} ` +
+          `agent — check them (${message})`,
+      );
+    }
+    console.warn(
+      `[FIRST-RUN] could not reach the backend (${message}) — signing in to ` +
+        `${config.firstRunDomain} only; re-run setup later if your stores are elsewhere`,
+    );
+    return [config.firstRunDomain];
+  }
+
+  if (!stores || stores.length === 0) {
+    console.warn('[FIRST-RUN] the backend did not say where the stores are — using the default site');
+    return [config.firstRunDomain];
+  }
+  const { sites, unknown } = signInSites(stores);
+  for (const store of stores) {
+    console.log(`[FIRST-RUN] store ${store.store_id} → ${store.short_code}`);
+  }
+  if (unknown.length > 0) {
+    console.warn(
+      `[FIRST-RUN] no sign-in site known for ${unknown.join(', ')} — their scrapers will ` +
+        'fail until src/sites.ts and the scrapers\' marketplaces.ts list them',
+    );
+  }
+  return sites.length > 0 ? sites : [config.firstRunDomain];
 }
 
 // Capitalised marketplace name for the setup form's copy, so a Noon agent does

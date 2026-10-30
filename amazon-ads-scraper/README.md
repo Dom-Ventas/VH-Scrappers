@@ -45,8 +45,8 @@ id/secret reads `client id/secret rejected — check the service account`, and a
 403 reads `service account lacks scrapper:run`.
 
 A VentaWiz admin creates the account in VentaWiz-Auth —
-`POST /v1/service-principals` (the secret is shown **once**) — and grants it
-`scrapper:run` with `POST /v1/grants`, at client or store scope. See the
+`POST /v1/service-principals?application=ventawiz` (the secret is shown **once**) — and grants it
+`scrapper:run` with `POST /v1/grants` (`"application": "ventawiz"`), for every store or per store. See the
 [root README](../README.md#2-credentials--ventawiz-service-accounts).
 
 ## Configuration
