@@ -149,17 +149,27 @@ outlives a 10-minute token.
 
 ### Creating a service account (VentaWiz admin)
 
-In VentaWiz-Auth (DV-Auth), as an admin of the tenant:
+In VentaWiz-Auth (DV-Auth), as an admin **signed in to that tenant** (holding
+`users:edit` and `grants:edit`). The admin calls act in the caller's tenant,
+and the account's tokens carry it.
 
-1. **Create the service principal** — `POST /v1/service-principals` for the
-   tenant (client). The response contains the `client_id` (`svc_…`) and the
-   `client_secret` (`vws_…`). **The secret is shown once** — copy it straight
-   to whoever sets up the laptop; it cannot be read back later (create a new
-   one if it is lost).
-2. **Grant it `scrapper:run`** — `POST /v1/grants` giving that principal the
-   `scrapper:run` capability of the VentaWiz application, at **client** scope
-   (all the tenant's stores) or **store** scope (only the stores that laptop
-   may scrape — any other store id then behaves as if it did not exist).
+**Name the `ventawiz` application on both calls.** Left out, it defaults to the
+caller's own application, which from the DV-Auth admin is `dv-auth`. The
+account's tokens would then be addressed to DV-Auth, the VentaWiz backend would
+answer every scraper call with 401, and `scrapper:run` could not be granted.
+
+1. **Create the service principal** —
+   `POST /v1/service-principals?application=ventawiz` with
+   `{"display_name": "Scrapers — <client>"}`. The response contains the
+   `principal_id`, the `client_id` (`svc_…`) and the `client_secret` (`vws_…`).
+   **The secret is shown once** — copy it straight to whoever sets up the
+   laptop; it cannot be read back later (create a new one if it is lost).
+2. **Grant it `scrapper:run`** — `POST /v1/grants` with
+   `{"application": "ventawiz", "principal_id": "<principal_id>",
+   "subject_kind": "permission", "subject_ref": "scrapper:run"}`. With no
+   scope it covers **every store** of the tenant; add
+   `"scope_kind": "store", "scope_id": <store id>` (one grant per store) to
+   limit it — any other store id then behaves as if it did not exist.
 
 Then enter the client ID + secret in the agent's first-run form.
 

@@ -126,13 +126,17 @@ bundles can share a single folder:
 
 Before setting up a laptop, get its **service account** from a VentaWiz admin:
 
-1. The admin creates it in VentaWiz-Auth — `POST /v1/service-principals` for
-   the tenant. The reply contains the `client_id` (`svc_…`) and the
-   `client_secret` (`vws_…`); **the secret is shown once** and cannot be read
-   back later.
-2. The admin grants it `scrapper:run` — `POST /v1/grants`, at client scope
-   (all the tenant's stores) or store scope (only the stores this laptop may
-   scrape).
+1. The admin, signed in to the tenant, creates it in VentaWiz-Auth —
+   `POST /v1/service-principals?application=ventawiz`. The reply contains the
+   `client_id` (`svc_…`) and the `client_secret` (`vws_…`); **the secret is
+   shown once** and cannot be read back later.
+2. The admin grants it `scrapper:run` — `POST /v1/grants` with
+   `"application": "ventawiz"`, with no scope (every store of the tenant) or
+   one grant per store (only the stores this laptop may scrape).
+
+**`application=ventawiz` is required on both.** Without it the account belongs
+to DV-Auth's own application, and the backend refuses its tokens with 401.
+See the root README for the exact request bodies.
 
 Then on the laptop:
 
