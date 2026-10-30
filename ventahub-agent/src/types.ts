@@ -37,10 +37,18 @@ export interface Assignment {
   results_endpoint: string;
 }
 
+/** One of the agent's stores, with the marketplace short code its scrapers open. */
+export interface CheckinStore {
+  store_id: number;
+  short_code: string;
+}
+
 export interface CheckinResponse {
   device_id: string;
   status: string; // active | disabled | retired
   assignments: Assignment[];
+  /** Absent from backends older than the per-site sign-in; treat as unknown. */
+  stores?: CheckinStore[];
   server_time: string;
 }
 
