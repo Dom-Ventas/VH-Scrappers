@@ -4,12 +4,12 @@ import * as path from 'path';
 import { config, localResultsDir } from '../config';
 import { ScrapedResult } from '../types';
 import { todayStamp } from '../util';
-import { apiFetch, authHeaders } from './http';
+import { apiFetch } from './http';
 
 /**
- * Backend integration is pending, so with no RESULTS_API_URL configured the
- * exact body that would have been POSTed is appended to
- * results/<profileId>-<date>.jsonl instead — one JSON object per line.
+ * LOCAL mode (no RESULTS_API_URL): the exact body that would have been POSTed
+ * is appended to results/store-<store_id>-<date>.jsonl instead — one JSON
+ * object per line.
  *
  * Keeping the payload byte-identical to the API-mode body means a captured line
  * can be diffed against what the backend expects before the endpoint is wired
@@ -25,12 +25,9 @@ function writeLocalResult(
     fs.mkdirSync(dir, { recursive: true });
   }
 
-  const safeProfileId =
-    result.profileId.replace(/[^a-zA-Z0-9_-]/g, '_') || 'default';
-
   const filePath = path.join(
     dir,
-    `${safeProfileId}-${todayStamp()}.jsonl`
+    `store-${result.store_id}-${todayStamp()}.jsonl`
   );
 
   fs.appendFileSync(
@@ -42,6 +39,14 @@ function writeLocalResult(
   console.log(`[postScrapedResult] LOCAL -> ${filePath}`);
 }
 
+/**
+ * POST one product page's result to /v1/scrapper/reviews:
+ *   { store_id, product_ids, rating, rating_count, critical_reviews: { reviews },
+ *     aplus_content, delivery_promise_days, pincode_applied }
+ *
+ * A 404 means a product id is not a focused listing of that store (or the store
+ * is gone); it is thrown with the body text like any other non-2xx.
+ */
 export async function postScrapedResult(
   result: ScrapedResult
 ): Promise<void> {
@@ -56,7 +61,7 @@ export async function postScrapedResult(
     {
       method: 'POST',
 
-      headers: authHeaders(),
+      headers: { 'Content-Type': 'application/json' },
 
       body:
         JSON.stringify(result)

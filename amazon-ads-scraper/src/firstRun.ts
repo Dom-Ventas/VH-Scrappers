@@ -3,7 +3,7 @@ import * as path from 'path';
 import { Page } from 'playwright';
 import { saveUserSettings } from './userSettings';
 import { UserSettings } from './types';
-import { config } from './config';
+import { config, parseStoreIds } from './config';
 
 function loadFirstRunHtml(): string {
   const candidates = [
@@ -19,19 +19,29 @@ function loadFirstRunHtml(): string {
     <h2>Search Term Scrapper — First Launch</h2>
     <form id="f">
       <p><label>Email ID <input id="emailId" required /></label></p>
-      <p><label>Profile IDs (one per line) <textarea id="profileIds" rows="4" required></textarea></label></p>
+      <p><label>Store IDs (one per line or comma-separated, digits only) <textarea id="storeIds" rows="4" required></textarea></label></p>
+      <p id="err" style="color:#b42318"></p>
       <p><button type="submit">Save</button></p>
     </form>
     <script>
       document.getElementById('f').addEventListener('submit', async (e) => {
         e.preventDefault();
-        const profileIds = document.getElementById('profileIds').value
+        const tokens = document.getElementById('storeIds').value
           .split(/[\\n,]+/)
           .map((s) => s.trim())
           .filter(Boolean);
+        const bad = tokens.filter((t) => !/^[0-9]+$/.test(t) || Number(t) <= 0);
+        const err = document.getElementById('err');
+        if (tokens.length === 0 || bad.length > 0) {
+          err.textContent = bad.length
+            ? 'Store IDs must be whole numbers. Not valid: ' + bad.join(', ')
+            : 'Enter at least one Store ID.';
+          return;
+        }
+        err.textContent = '';
         await window.__saveUserSettings({
           emailId: document.getElementById('emailId').value.trim(),
-          profileIds,
+          storeIds: tokens,
         });
       });
     </script>
@@ -48,22 +58,23 @@ export async function runFirstLaunchFlow(page: Page): Promise<UserSettings> {
 
   await page.exposeFunction(
     '__saveUserSettings',
-    (data: { emailId: string; profileIds: string[] }) => {
-      const profileIds = (data.profileIds || [])
-        .map((p) => String(p).trim())
-        .filter(Boolean);
-      if (profileIds.length === 0) {
-        console.warn('[FIRST-RUN] No profile IDs provided — ignoring submission.');
-        return;
+    (data: { emailId: string; storeIds: Array<string | number> }) => {
+      const { ids: storeIds, invalid } = parseStoreIds(data.storeIds || []);
+      if (invalid.length > 0) {
+        // The form validates too; this guards a hand-edited page.
+        throw new Error(`Store IDs must be whole numbers. Not valid: ${invalid.join(', ')}`);
+      }
+      if (storeIds.length === 0) {
+        throw new Error('Enter at least one Store ID.');
       }
       const settings: UserSettings = {
         emailId: data.emailId,
-        profileIds,
+        storeIds,
         firstRunCompletedAt: new Date().toISOString(),
       };
       saveUserSettings(settings);
       console.log(
-        `[FIRST-RUN] Settings saved: emailId="${settings.emailId}" profileIds=[${settings.profileIds.join(', ')}]`,
+        `[FIRST-RUN] Settings saved: emailId="${settings.emailId}" storeIds=[${settings.storeIds.join(', ')}]`,
       );
       resolveSettings(settings);
     },

@@ -89,19 +89,19 @@
     <div class="card">
       <h1>Welcome — one-time setup</h1>
       <p class="sub">
-        Enter your Email ID and one or more Profile IDs. These will be saved on
-        this laptop and attached to every scraped result. After saving, this
-        window will open noon so you can sign in and set your delivery address
-        once.
+        Enter your Email ID and one or more VentaWiz Store IDs. These will be
+        saved on this laptop and decide which stores' search terms are scraped.
+        After saving, this window will open noon so you can sign in and set
+        your delivery address once.
       </p>
 
       <form id="setup-form" autocomplete="off">
         <label for="emailId">Email ID</label>
         <input type="text" id="emailId" name="emailId" placeholder="you@example.com" required />
 
-        <label for="profileIds">Profile IDs</label>
-        <textarea id="profileIds" name="profileIds" rows="4" placeholder="PRF-123&#10;PRF-456&#10;PRF-789" required></textarea>
-        <div class="hint">One Profile ID per line (commas also accepted).</div>
+        <label for="storeIds">Store IDs</label>
+        <textarea id="storeIds" name="storeIds" rows="4" placeholder="13&#10;16" required></textarea>
+        <div class="hint">One Store ID per line (commas also accepted). Digits only.</div>
 
         <button id="save-btn" type="submit">Save and continue</button>
         <div class="status" id="status"></div>
@@ -116,13 +116,19 @@
       form.addEventListener('submit', async (ev) => {
         ev.preventDefault();
         const emailId = document.getElementById('emailId').value.trim();
-        const profileIds = document.getElementById('profileIds').value
-          .split(/[\n,]+/)
+        const storeIds = document.getElementById('storeIds').value
+          .split(/[\s,]+/)
           .map((s) => s.trim())
           .filter(Boolean);
-        if (!emailId || profileIds.length === 0) {
+        if (!emailId || storeIds.length === 0) {
           statusEl.classList.add('error');
-          statusEl.textContent = 'Please enter an Email ID and at least one Profile ID.';
+          statusEl.textContent = 'Please enter an Email ID and at least one Store ID.';
+          return;
+        }
+        const bad = storeIds.filter((s) => !/^[0-9]+$/.test(s) || Number(s) <= 0);
+        if (bad.length > 0) {
+          statusEl.classList.add('error');
+          statusEl.textContent = 'Store IDs must be whole numbers (digits only). Not valid: ' + bad.join(', ');
           return;
         }
 
@@ -131,8 +137,8 @@
         statusEl.textContent = 'Saving...';
 
         try {
-          await window.__saveUserSettings({ emailId, profileIds });
-          statusEl.textContent = 'Saved (' + profileIds.length + ' profile ID' + (profileIds.length === 1 ? '' : 's') + '). Opening noon — please sign in and set your delivery address.';
+          await window.__saveUserSettings({ emailId, storeIds });
+          statusEl.textContent = 'Saved (' + storeIds.length + ' store ID' + (storeIds.length === 1 ? '' : 's') + '). Opening noon — please sign in and set your delivery address.';
         } catch (err) {
           statusEl.classList.add('error');
           statusEl.textContent = 'Failed to save: ' + (err && err.message ? err.message : String(err));

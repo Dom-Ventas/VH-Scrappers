@@ -89,8 +89,8 @@
     <div class="card">
       <h1>Welcome — one-time setup</h1>
       <p class="sub">
-        Enter your Email ID and one or more Profile IDs. These will be saved on
-        this laptop and attached to every scraped result. After saving, this
+        Enter your Email ID and one or more VentaWiz Store IDs. These will be
+        saved on this laptop; search terms are fetched for each store. After saving, this
         window will open Flipkart so you can sign in and set your delivery
         pincode once.
       </p>
@@ -99,9 +99,9 @@
         <label for="emailId">Email ID</label>
         <input type="text" id="emailId" name="emailId" placeholder="you@example.com" required />
 
-        <label for="profileIds">Profile IDs</label>
-        <textarea id="profileIds" name="profileIds" rows="4" placeholder="PRF-123&#10;PRF-456&#10;PRF-789" required></textarea>
-        <div class="hint">One Profile ID per line (commas also accepted).</div>
+        <label for="storeIds">Store IDs</label>
+        <textarea id="storeIds" name="storeIds" rows="4" placeholder="13&#10;16" required></textarea>
+        <div class="hint">One Store ID per line (commas also accepted). Digits only.</div>
 
         <button id="save-btn" type="submit">Save and continue</button>
         <div class="status" id="status"></div>
@@ -116,13 +116,20 @@
       form.addEventListener('submit', async (ev) => {
         ev.preventDefault();
         const emailId = document.getElementById('emailId').value.trim();
-        const profileIds = document.getElementById('profileIds').value
+        const storeIdsRaw = document.getElementById('storeIds').value;
+        const storeIds = storeIdsRaw
           .split(/[\n,]+/)
           .map((s) => s.trim())
           .filter(Boolean);
-        if (!emailId || profileIds.length === 0) {
+        if (!emailId || storeIds.length === 0) {
           statusEl.classList.add('error');
-          statusEl.textContent = 'Please enter an Email ID and at least one Profile ID.';
+          statusEl.textContent = 'Please enter an Email ID and at least one Store ID.';
+          return;
+        }
+        const bad = storeIds.find((s) => !/^[0-9]+$/.test(s) || Number(s) <= 0);
+        if (bad !== undefined) {
+          statusEl.classList.add('error');
+          statusEl.textContent = '"' + bad + '" is not a Store ID — Store IDs are whole numbers, e.g. 13.';
           return;
         }
 
@@ -131,8 +138,14 @@
         statusEl.textContent = 'Saving...';
 
         try {
-          await window.__saveUserSettings({ emailId, profileIds });
-          statusEl.textContent = 'Saved (' + profileIds.length + ' profile ID' + (profileIds.length === 1 ? '' : 's') + '). Opening Flipkart — please sign in and set your delivery pincode.';
+          const res = await window.__saveUserSettings({ emailId, storeIds: storeIdsRaw });
+          if (!res || !res.ok) {
+            statusEl.classList.add('error');
+            statusEl.textContent = (res && res.error) || 'Failed to save.';
+            saveBtn.disabled = false;
+            return;
+          }
+          statusEl.textContent = 'Saved (' + storeIds.length + ' store ID' + (storeIds.length === 1 ? '' : 's') + '). Opening Flipkart — please sign in and set your delivery pincode.';
         } catch (err) {
           statusEl.classList.add('error');
           statusEl.textContent = 'Failed to save: ' + (err && err.message ? err.message : String(err));

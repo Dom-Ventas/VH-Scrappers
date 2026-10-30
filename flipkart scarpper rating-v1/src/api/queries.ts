@@ -2,36 +2,48 @@ import * as fs from 'fs';
 
 import { config, localQueriesPath } from '../config';
 import { Query } from '../types';
-import { apiFetch, authHeaders } from './http';
+import { apiFetch } from './http';
 
+/** The backend refuses more than 50 `store_id`s in one request. */
+const MAX_STORES_PER_REQUEST = 50;
+
+/** Largest page the backend serves. */
+const PAGE_LIMIT = 100;
+
+/**
+ * One review-queue item:
+ *   { product_ids: [101, 102], mp_product_id: "MOBHDDQKFPCHQV9B", short_code: "FKIN", store_id: 16 }
+ */
 function toQuery(
   row: any
 ): Query {
 
   return {
-    productId: row.productId ?? row.product_id,
+    productIds:
+      Array.isArray(row.product_ids)
+        ? row.product_ids.map(Number)
+        : [],
 
-    // Accepts `pid` or `asin` so the same mapper works whichever field name the
-    // backend settles on (see PLAN.md §11.1).
-    pid: String(row.pid ?? row.asin ?? '').trim(),
+    pid: String(row.mp_product_id ?? '').trim(),
 
     shortCode: String(
-      row.shortCode ?? row.short_code ?? 'FKIN'
-    ).trim()
+      row.short_code ?? 'FKIN'
+    ).trim(),
+
+    storeId: Number(row.store_id)
   };
 }
 
 /**
- * Backend integration is pending, so with no QUERIES_API_URL configured the
- * scraper reads its work list from queries.json next to the executable:
+ * LOCAL mode (no QUERIES_API_URL): the work list is read from queries.json next
+ * to the executable — a bare array of queue items in the API's own shape:
  *
- *   { "default": [ { "productId": 1, "pid": "ACC...", "shortCode": "FKIN" } ] }
+ *   [ { "product_ids": [101], "mp_product_id": "ACC...", "short_code": "FKIN", "store_id": 13 } ]
  *
- * Keyed by profileId so this exercises the same per-profile loop the live API
- * will drive. A bare array is also accepted and treated as one profile.
+ * Only items for the given store ids are returned, as the API would.
  */
 function loadLocalQueries(
-  profileId: string
+  storeIds: number[]
 ): Query[] {
 
   const filePath = localQueriesPath();
@@ -60,66 +72,110 @@ function loadLocalQueries(
 
   const rows = Array.isArray(parsed)
     ? parsed
-    : parsed?.[profileId] ?? parsed?.default;
+    : parsed?.items;
 
   if (!Array.isArray(rows)) {
     throw new Error(
-      `No entry for profileId="${profileId}" in ${filePath}`
+      `${filePath} must be an array of queue items (or { "items": [...] })`
     );
   }
 
   console.log(
-    `[fetchQueries] LOCAL ${filePath} -> profileId="${profileId}"`
+    `[fetchQueries] LOCAL ${filePath} -> storeIds=[${storeIds.join(', ')}]`
   );
 
-  return rows.map(toQuery).filter(q => q.pid);
+  return rows
+    .map(toQuery)
+    .filter(q => q.pid && storeIds.includes(q.storeId));
 }
 
+/**
+ * Fetch every product page due for the given VentaWiz stores, following the
+ * queue's pagination to the end:
+ *
+ *   GET {queriesApiUrl}?store_id=13&store_id=16&marketplace=flipkart&page=1&limit=100
+ *   -> { items: [...], pagination: { page, limit, total, pages } }
+ *
+ * Store ids are sent in chunks of 50, the most one request may carry.
+ */
 export async function fetchQueries(
-  profileId: string
+  storeIds: number[]
 ): Promise<Query[]> {
 
   if (!config.queriesApiUrl) {
-    return loadLocalQueries(profileId);
+    return loadLocalQueries(storeIds);
   }
 
-  const url =
-    `${config.queriesApiUrl}?profile_id=${encodeURIComponent(profileId)}`;
+  const queries: Query[] = [];
 
-  console.log(
-    '[fetchQueries] URL:',
-    url
-  );
-
-  const res = await apiFetch(
-    url,
-    {
-      headers: authHeaders()
-    }
-  );
-
-  if (!res.ok) {
-
-    const body =
-      await res.text();
-
-    throw new Error(
-      `fetchQueries ${res.status} ${body}`
-    );
-  }
-
-  const data =
-    await res.json();
-
-  if (
-    !data.items ||
-    !Array.isArray(data.items)
+  for (
+    let start = 0;
+    start < storeIds.length;
+    start += MAX_STORES_PER_REQUEST
   ) {
 
-    throw new Error(
-      'Invalid query response'
-    );
+    const chunk =
+      storeIds.slice(start, start + MAX_STORES_PER_REQUEST);
+
+    for (let page = 1; ; page++) {
+
+      const params = new URLSearchParams();
+
+      for (const id of chunk) {
+        params.append('store_id', String(id));
+      }
+
+      params.set('marketplace', config.marketplace);
+      params.set('page', String(page));
+      params.set('limit', String(PAGE_LIMIT));
+
+      const url =
+        `${config.queriesApiUrl}?${params.toString()}`;
+
+      console.log(
+        '[fetchQueries] URL:',
+        url
+      );
+
+      const res = await apiFetch(url);
+
+      if (!res.ok) {
+
+        const body =
+          await res.text();
+
+        throw new Error(
+          `fetchQueries ${res.status} ${body}`
+        );
+      }
+
+      const data =
+        await res.json();
+
+      if (
+        !data.items ||
+        !Array.isArray(data.items)
+      ) {
+
+        throw new Error(
+          'Invalid query response'
+        );
+      }
+
+      queries.push(
+        ...data.items
+          .map(toQuery)
+          .filter((q: Query) => q.pid)
+      );
+
+      const pages =
+        Number(data.pagination?.pages) || 0;
+
+      if (pages === 0 || page >= pages) {
+        break;
+      }
+    }
   }
 
-  return data.items.map(toQuery);
+  return queries;
 }

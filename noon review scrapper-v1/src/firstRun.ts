@@ -21,16 +21,31 @@ export async function runFirstLaunchFlow(
     '__saveUserSettings',
     async (data: {
       emailId: string;
-      profileIds: string[];
+      storeIds: Array<string | number>;
     }) => {
+
+      const tokens =
+        (data.storeIds || [])
+          .map(v => String(v).trim())
+          .filter(Boolean);
+
+      const bad =
+        tokens.filter(t => !/^\d+$/.test(t) || Number(t) <= 0);
+
+      if (tokens.length === 0 || bad.length > 0) {
+
+        // Thrown back into the page, which shows it under the form.
+        throw new Error(
+          bad.length
+            ? `Store IDs must be whole numbers. Not valid: ${bad.join(', ')}`
+            : 'Enter at least one Store ID.'
+        );
+      }
 
       const settings: UserSettings = {
         emailId: data.emailId.trim(),
 
-        profileIds:
-          data.profileIds
-            .map(v => v.trim())
-            .filter(Boolean),
+        storeIds: [...new Set(tokens.map(Number))],
 
         firstRunCompletedAt:
           new Date().toISOString()
@@ -38,7 +53,9 @@ export async function runFirstLaunchFlow(
 
       saveUserSettings(settings);
 
-      console.log('[FIRST-RUN] Settings saved');
+      console.log(
+        `[FIRST-RUN] Settings saved: storeIds=[${settings.storeIds.join(', ')}]`
+      );
 
       resolver(settings);
     }
@@ -59,13 +76,15 @@ export async function runFirstLaunchFlow(
 
 <br/><br/>
 
-<label>Profile IDs (one per line, or comma separated)</label>
+<label>Store IDs (one per line, or comma separated — digits only)</label>
 <br/>
-<textarea id="profiles" rows="6" style="width: 100%; padding: 6px;"></textarea>
+<textarea id="storeIds" rows="6" style="width: 100%; padding: 6px;"></textarea>
 
 <br/><br/>
 
 <button type="submit" style="padding: 8px 18px;">Save</button>
+
+<p id="status" style="color: #b42318;"></p>
 
 </form>
 
@@ -76,17 +95,36 @@ document
 
     e.preventDefault();
 
-    var profileIds = document
-      .getElementById('profiles')
+    var status = document.getElementById('status');
+
+    var storeIds = document
+      .getElementById('storeIds')
       .value
-      .split(/[\\n,]+/)
+      .split(/[\\s,]+/)
       .map(function (v) { return v.trim(); })
       .filter(Boolean);
 
-    await window.__saveUserSettings({
-      emailId: document.getElementById('email').value,
-      profileIds: profileIds
+    var bad = storeIds.filter(function (v) {
+      return !/^[0-9]+$/.test(v) || Number(v) <= 0;
     });
+
+    if (storeIds.length === 0 || bad.length > 0) {
+      status.textContent = bad.length
+        ? 'Store IDs must be whole numbers (digits only). Not valid: ' + bad.join(', ')
+        : 'Enter at least one Store ID.';
+      return;
+    }
+
+    try {
+      await window.__saveUserSettings({
+        emailId: document.getElementById('email').value,
+        storeIds: storeIds
+      });
+      status.textContent = '';
+    } catch (err) {
+      status.textContent =
+        'Failed to save: ' + (err && err.message ? err.message : String(err));
+    }
   });
 </script>
 

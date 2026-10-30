@@ -11,9 +11,11 @@
  *     state are left alone.
  *   - user-settings.json is seeded there so the run never drops into the
  *     first-launch form.
- *   - API URLs/token are passed as env vars, overriding .env for this run only.
+ *   - API URLs, the auth URL and a dummy service account (svc_dev / vws_dev)
+ *     are passed as env vars, overriding .env for this run only. The mock
+ *     backend also answers POST /v1/token, so no DV-Auth is needed.
  *
- * Keywords scraped come from mock/queries.json — edit that to change the set.
+ * Search terms scraped come from mock/queries.json — edit that to change the set.
  */
 import { spawn } from 'child_process';
 import * as fs from 'fs';
@@ -21,8 +23,7 @@ import * as path from 'path';
 import { startMockServer } from '../mock/server';
 
 const PORT = Number(process.env.MOCK_PORT || 8787);
-const BASE = `http://127.0.0.1:${PORT}/backend/api/v1/scrapper`;
-const TOKEN = process.env.MOCK_API_TOKEN || 'dummy-local-token';
+const BASE = `http://127.0.0.1:${PORT}/v1/scrapper`;
 
 const ROOT = path.join(__dirname, '..');
 const DEV_PROFILE_DIR = path.join(ROOT, '.dev-profile');
@@ -30,28 +31,30 @@ const RECEIVED_DIR = path.join(ROOT, 'mock', 'received');
 const SEED_PATH = path.join(ROOT, 'mock', 'queries.json');
 
 /**
- * Scrape whichever profiles mock/queries.json actually defines. Deriving this
- * instead of hardcoding means renaming the profile key in queries.json can't
+ * Scrape whichever stores mock/queries.json actually defines. Deriving this
+ * instead of hardcoding means changing the store id in queries.json can't
  * leave dev-api asking for one that no longer exists and silently getting back
  * zero queries.
  */
-function profileIdsFromSeed(): string[] {
-  if (process.env.DEV_PROFILE_ID) return [process.env.DEV_PROFILE_ID];
-  const seed = JSON.parse(fs.readFileSync(SEED_PATH, 'utf-8')) as Record<string, unknown[]>;
-  return Object.keys(seed);
+function storeIdsFromSeed(): number[] {
+  if (process.env.DEV_STORE_IDS) {
+    return process.env.DEV_STORE_IDS.split(',').map((s) => Number(s.trim())).filter(Boolean);
+  }
+  const seed = JSON.parse(fs.readFileSync(SEED_PATH, 'utf-8')) as Array<{ store_id: number }>;
+  return [...new Set(seed.map((r) => r.store_id))];
 }
 
-function seedSettings(profileIds: string[]): void {
+function seedSettings(storeIds: number[]): void {
   fs.mkdirSync(DEV_PROFILE_DIR, { recursive: true });
   const file = path.join(DEV_PROFILE_DIR, 'user-settings.json');
   // Always rewritten (not written-once) so an edit to queries.json can't leave
-  // a stale profile id behind in the throwaway dev profile.
+  // a stale store id behind in the throwaway dev profile.
   fs.writeFileSync(
     file,
     JSON.stringify(
       {
         emailId: process.env.DEV_EMAIL_ID || 'dev@example.com',
-        profileIds,
+        storeIds,
         firstRunCompletedAt: new Date().toISOString(),
       },
       null,
@@ -60,7 +63,7 @@ function seedSettings(profileIds: string[]): void {
     'utf-8',
   );
   console.log(
-    `[DEV-API] seeded ${path.relative(ROOT, file)} (profileIds=[${profileIds.join(', ')}])`,
+    `[DEV-API] seeded ${path.relative(ROOT, file)} (storeIds=[${storeIds.join(', ')}])`,
   );
 }
 
@@ -73,9 +76,13 @@ function runScraper(): Promise<number> {
       stdio: 'inherit',
       env: {
         ...process.env,
-        QUERIES_API_URL: `${BASE}/queries`,
-        RESULTS_API_URL: `${BASE}/results`,
-        API_TOKEN: TOKEN,
+        QUERIES_API_URL: `${BASE}/search-term-queries`,
+        RESULTS_API_URL: `${BASE}/search-term-results`,
+        SCRAPE_MARKETPLACE: 'flipkart',
+        // The mock serves a fake /v1/token on the same port.
+        VW_AUTH_URL: `http://127.0.0.1:${PORT}`,
+        VW_CLIENT_ID: 'svc_dev',
+        VW_CLIENT_SECRET: 'vws_dev',
         SCRAPER_PROFILE_DIR: DEV_PROFILE_DIR,
         // Keep the dev loop quick; production defaults to 30s.
         SCRAPE_DELAY_MS: process.env.SCRAPE_DELAY_MS || '2000',
@@ -93,11 +100,11 @@ function summarise(): number {
   const files = fs.readdirSync(RECEIVED_DIR).filter((f) => f.endsWith('.json'));
   const rows = files.map((f) => {
     const d = JSON.parse(fs.readFileSync(path.join(RECEIVED_DIR, f), 'utf-8'));
-    const sponsored = d.products.filter((p: any) => p.isSponsored);
-    const organic = d.products.filter((p: any) => !p.isSponsored);
+    const sponsored = d.products.filter((p: any) => p.is_sponsored);
+    const organic = d.products.filter((p: any) => !p.is_sponsored);
     return {
-      keyword: d.searchTerm,
-      queryId: d.queryId,
+      searchTerm: d.search_term,
+      storeId: d.store_id,
       products: d.products.length,
       sponsored: sponsored.length,
       organic: organic.length,
@@ -116,9 +123,9 @@ async function main(): Promise<void> {
   // Start clean so the summary reflects only this run.
   fs.rmSync(RECEIVED_DIR, { recursive: true, force: true });
 
-  const profileIds = profileIdsFromSeed();
-  if (profileIds.length === 0) {
-    console.error('[DEV-API] mock/queries.json defines no profiles — nothing to scrape.');
+  const storeIds = storeIdsFromSeed();
+  if (storeIds.length === 0) {
+    console.error('[DEV-API] mock/queries.json defines no stores — nothing to scrape.');
     process.exit(1);
   }
 
@@ -142,7 +149,7 @@ async function main(): Promise<void> {
     console.log(`[DEV-API] reusing the mock backend already running on :${PORT}`);
   }
 
-  seedSettings(profileIds);
+  seedSettings(storeIds);
   console.log('[DEV-API] starting scrape...\n');
 
   const code = await runScraper();

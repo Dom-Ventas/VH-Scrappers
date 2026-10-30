@@ -2,8 +2,9 @@ import { openPersistentContext } from './browser';
 import { config } from './config';
 import { loadUserSettings } from './userSettings';
 import { runFirstLaunchFlow } from './firstRun';
+import { credentialsProblem, serviceAccountId } from './api/auth';
 import { fetchQueries } from './api/queries';
-import { postScrapedResult } from './api/results';
+import { postScrapedResult, toResultProducts } from './api/results';
 import { scrapeSearchTerm } from './scraper';
 import { resolveMarketplace } from './marketplaces';
 import { sleep } from './util';
@@ -12,111 +13,121 @@ async function main(): Promise<void> {
   console.log(`[BOOT] profile dir: ${config.profileDir}`);
   console.log(`[BOOT] scrape delay: ${config.scrapeDelayMs}ms`);
 
-  // Pre-load settings so we can decide whether the browser needs to be
-  // visible. First-run requires the user to interact with the form and to
-  // sign into noon, so it must be on-screen. Subsequent runs default to
-  // off-screen (background) so the user can keep working in other windows.
-  // BROWSER_VISIBLE=1 forces visible regardless (useful for debugging).
+  // Store ids come from the agent (SCRAPE_STORE_IDS) when it launched us, else
+  // from user-settings.json. Only a standalone run with neither needs the
+  // first-run form — which also needs the user to sign into noon, so it must be
+  // on-screen. Other runs default to off-screen (background) so the user can
+  // keep working in other windows. BROWSER_VISIBLE=1 forces visible regardless
+  // (useful for debugging).
   const existingSettings = loadUserSettings();
-  const visible = !existingSettings || process.env.BROWSER_VISIBLE === '1';
+  const needsFirstRun = config.envStoreIds.length === 0 && !existingSettings;
+  const visible = needsFirstRun || process.env.BROWSER_VISIBLE === '1';
   console.log(`[BOOT] browser window: ${visible ? 'visible' : 'off-screen'}`);
+
+  // No service account → nothing can be fetched or posted. Fail before
+  // opening Chrome, keeping the [FAIL]/[DONE] markers the agent counts.
+  const credentialsError = credentialsProblem();
+  if (credentialsError) {
+    console.error(`[FAIL] ${credentialsError}`);
+    console.log('[DONE] no queries processed (no service-account credentials)');
+    return;
+  }
+  console.log(`[BOOT] service account: ${serviceAccountId()} via ${config.authRoot}`);
 
   const context = await openPersistentContext({ visible });
   const page = await context.newPage();
 
   try {
-    let settings = existingSettings;
-    if (!settings) {
-      settings = await runFirstLaunchFlow(page);
-      // The first-run flow may close the page when the user closes the login tab.
-      // Ensure we have a usable page for scraping.
-      if (page.isClosed()) {
-        // no-op: we'll open a fresh one below
-      }
-    } else {
+    let storeIds: number[];
+    if (config.envStoreIds.length > 0) {
+      storeIds = config.envStoreIds;
+      console.log(`[BOOT] store ids from SCRAPE_STORE_IDS: [${storeIds.join(', ')}]`);
+    } else if (existingSettings) {
+      storeIds = existingSettings.storeIds;
       console.log(
-        `[BOOT] loaded settings: emailId="${settings.emailId}" profileIds=[${settings.profileIds.join(', ')}]`,
+        `[BOOT] loaded settings: emailId="${existingSettings.emailId}" storeIds=[${storeIds.join(', ')}]`,
       );
+    } else {
+      // The first-run flow may close the page when the user closes the login
+      // tab; a fresh one is opened below.
+      storeIds = (await runFirstLaunchFlow(page)).storeIds;
     }
 
     const scrapePage = page.isClosed() ? await context.newPage() : page;
 
-    for (let p = 0; p < settings.profileIds.length; p++) {
-      const profileId = settings.profileIds[p];
+    console.log(
+      `[QUEUE] fetching search terms for ${storeIds.length} store(s), marketplace=${config.marketplace}`,
+    );
+    let queries;
+    try {
+      queries = await fetchQueries(storeIds);
+    } catch (err) {
+      console.error(`[FAIL] fetchQueries for storeIds=[${storeIds.join(', ')}]:`, err);
+      console.log('[DONE] no queries processed');
+      return;
+    }
+
+    const totalFromApi = queries.length;
+    if (config.shortCodeFilter.length > 0) {
+      const allow = new Set(config.shortCodeFilter);
+      const seen = [...new Set(queries.map((q) => q.shortCode.toUpperCase()))];
+      queries = queries.filter((q) => allow.has(q.shortCode.toUpperCase()));
       console.log(
-        `[PROFILE ${p + 1}/${settings.profileIds.length}] fetching queries for "${profileId}"`,
+        `[QUEUE] ${queries.length}/${totalFromApi} queries match SCRAPE_SHORT_CODES=[${config.shortCodeFilter.join(',')}]`,
       );
-
-      let queries;
-      try {
-        queries = await fetchQueries(profileId);
-      } catch (err) {
-        console.error(`[FAIL] fetchQueries for profileId="${profileId}":`, err);
-        continue;
-      }
-      const totalFromApi = queries.length;
-      if (config.shortCodeFilter.length > 0) {
-        const allow = new Set(config.shortCodeFilter);
-        const seen = [...new Set(queries.map((q) => q.shortCode.toUpperCase()))];
-        queries = queries.filter((q) => allow.has(q.shortCode.toUpperCase()));
-        console.log(
-          `[PROFILE ${profileId}] ${queries.length}/${totalFromApi} queries match SCRAPE_SHORT_CODES=[${config.shortCodeFilter.join(',')}]`,
+      // A filter that drops EVERY query is almost always a config mismatch,
+      // not an intentional no-op — and it is otherwise invisible, because the
+      // run goes on to finish cleanly and report success having scraped
+      // nothing. Name both sides so the mismatch is obvious at a glance.
+      if (totalFromApi > 0 && queries.length === 0) {
+        console.error(
+          `[QUEUE] SHORT CODE MISMATCH: SCRAPE_SHORT_CODES=[${config.shortCodeFilter.join(',')}] ` +
+            `matched none of the ${totalFromApi} queries the API returned (their codes: [${seen.join(', ')}]). ` +
+            'Nothing will be scraped. Check SCRAPE_SHORT_CODES against the backend ' +
+            'marketplace table and the MARKETPLACES map in src/marketplaces.ts.',
         );
-        // A filter that drops EVERY query is almost always a config mismatch,
-        // not an intentional no-op — and it is otherwise invisible, because the
-        // run goes on to finish cleanly and report success having scraped
-        // nothing. Name both sides so the mismatch is obvious at a glance.
-        if (totalFromApi > 0 && queries.length === 0) {
-          console.error(
-            `[PROFILE ${profileId}] SHORT CODE MISMATCH: SCRAPE_SHORT_CODES=[${config.shortCodeFilter.join(',')}] ` +
-              `matched none of the ${totalFromApi} queries the API returned (their codes: [${seen.join(', ')}]). ` +
-              'Nothing will be scraped for this profile. Check that the launcher\'s short codes match the ' +
-              'backend marketplace table and the MARKETPLACES map in src/marketplaces.ts.',
+      }
+    } else {
+      console.log(`[QUEUE] ${queries.length} queries to scrape`);
+    }
+
+    for (let i = 0; i < queries.length; i++) {
+      const q = queries[i];
+      const label = `[store ${q.storeId}] [${i + 1}/${queries.length}] "${q.searchTerm}"`;
+      try {
+        const marketplace = resolveMarketplace(q.shortCode);
+        const allProducts = await scrapeSearchTerm(scrapePage, marketplace, q.searchTerm);
+        // Backend keeps up to 5 sponsored (comp1..5) + 5 organic (org1..5) and
+        // never mixes them, so send both buckets in page order. Cards with no
+        // SKU are dropped; an empty list is still posted ("no ads today").
+        const products = toResultProducts(allProducts);
+        const sponsored = products.filter((pr) => pr.is_sponsored).length;
+        const organic = products.length - sponsored;
+        console.log(
+          `[FILTER] ${label} -> sending ${sponsored} sponsored + ${organic} organic (of ${allProducts.length} scraped)`,
+        );
+        const outcome = await postScrapedResult({
+          store_id: q.storeId,
+          search_term: q.searchTerm,
+          products,
+        });
+        if (outcome.alreadyStored) {
+          console.log(`[OK] ${label} (already stored today)`);
+        } else {
+          const s = outcome.stored;
+          console.log(
+            `[OK] ${label} -> stored ${s?.sponsored ?? sponsored} sponsored + ${s?.organic ?? organic} organic` +
+              (s?.id != null ? ` (id ${s.id})` : ''),
           );
         }
-      } else {
-        console.log(`[PROFILE ${profileId}] ${queries.length} queries to scrape`);
+      } catch (err) {
+        console.error(`[FAIL] ${label}:`, err);
       }
 
-      for (let i = 0; i < queries.length; i++) {
-        const q = queries[i];
-        const label = `[${profileId}] [${i + 1}/${queries.length}] "${q.searchTerm}"`;
-        try {
-          const marketplace = resolveMarketplace(q.shortCode);
-          const allProducts = await scrapeSearchTerm(scrapePage, marketplace, q.searchTerm);
-          // Backend wants up to 5 sponsored + 5 organic (schema caps at 10). It
-          // picks comp1..5 sponsored-first (backfilled with organic) and
-          // org1..5, so we send both buckets — not sponsored-only, which left
-          // the organic columns NULL and often failed the 5-competitor check.
-          const sponsored = allProducts.filter((pr) => pr.isSponsored).slice(0, 5);
-          const organic = allProducts.filter((pr) => !pr.isSponsored).slice(0, 5);
-          const products = [...sponsored, ...organic];
-          console.log(
-            `[FILTER] ${label} -> sending ${sponsored.length} sponsored + ${organic.length} organic (of ${allProducts.length} scraped)`,
-          );
-          await postScrapedResult({
-            emailId: settings.emailId,
-            profileId,
-            queryId: q.id,
-            shortCode: q.shortCode,
-            searchTerm: q.searchTerm,
-            scrapedAt: new Date().toISOString(),
-            products,
-          });
-          console.log(
-            `[OK] ${label} -> sent ${products.length} products (${sponsored.length} sponsored + ${organic.length} organic)`,
-          );
-        } catch (err) {
-          console.error(`[FAIL] ${label}:`, err);
-        }
-
-        const isLastQueryOfLastProfile =
-          p === settings.profileIds.length - 1 && i === queries.length - 1;
-        if (!isLastQueryOfLastProfile) {
-          const secs = Math.round(config.scrapeDelayMs / 1000);
-          console.log(`[WAIT] sleeping ${secs}s before next query...`);
-          await sleep(config.scrapeDelayMs);
-        }
+      if (i < queries.length - 1) {
+        const secs = Math.round(config.scrapeDelayMs / 1000);
+        console.log(`[WAIT] sleeping ${secs}s before next query...`);
+        await sleep(config.scrapeDelayMs);
       }
     }
 

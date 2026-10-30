@@ -6,7 +6,7 @@
  * sign-in domain and the `agentKind` sent on check-in.
  *
  * Deliberately a surgical line replacement rather than rewriting the file:
- * `embedded.ts` also carries EMBEDDED_TOKEN and EMBEDDED_API_ROOT, and a
+ * `embedded.ts` also carries EMBEDDED_API_ROOT and EMBEDDED_AUTH_ROOT, and a
  * regenerate-the-whole-file approach silently drops any constant it does not
  * know about. (The CI workflow used to do exactly that, which is why adding
  * this constant would have broken the build.)

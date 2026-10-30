@@ -11,7 +11,8 @@ import {
 } from './types';
 
 import {
-  config
+  config,
+  parseStoreIds
 } from './config';
 
 export async function runFirstLaunchFlow(
@@ -37,20 +38,35 @@ export async function runFirstLaunchFlow(
     async (
       data: {
         emailId: string;
-        profileIds: string[];
+        storeIds: Array<string | number>;
       }
     ) => {
+      const {
+        ids: storeIds,
+        invalid
+      } = parseStoreIds(
+        data.storeIds || []
+      );
+
+      // The form validates too; this guards a hand-edited page.
+      if (invalid.length > 0) {
+        throw new Error(
+          `Store IDs must be whole numbers. Not valid: ${invalid.join(', ')}`
+        );
+      }
+
+      if (storeIds.length === 0) {
+        throw new Error(
+          'Enter at least one Store ID.'
+        );
+      }
+
       const settings: UserSettings =
         {
           emailId:
             data.emailId.trim(),
 
-          profileIds:
-            data.profileIds
-              .map(v =>
-                v.trim()
-              )
-              .filter(Boolean),
+          storeIds,
 
           firstRunCompletedAt:
             new Date().toISOString()
@@ -61,7 +77,7 @@ export async function runFirstLaunchFlow(
       );
 
       console.log(
-        '[FIRST-RUN] Settings saved'
+        `[FIRST-RUN] Settings saved: storeIds=[${storeIds.join(', ')}]`
       );
 
       resolver(settings);
@@ -81,16 +97,16 @@ export async function runFirstLaunchFlow(
 
 <br/><br/>
 
-<label>Profile IDs</label>
+<label>Store IDs (one per line or comma-separated, digits only)</label>
 <br/>
 
 <textarea
- id="profiles"
+ id="stores"
  rows="6"
  cols="50">
 </textarea>
 
-<br/><br/>
+<p id="err" style="color:#b42318"></p>
 
 <button type="submit">
 Save
@@ -108,22 +124,44 @@ document
 
 e.preventDefault();
 
-const profileIds =
+const storeIds =
 document
-.getElementById('profiles')
+.getElementById('stores')
 .value
 .split(/[\\n,]+/)
 .map(v => v.trim())
 .filter(Boolean);
 
+const err =
+document.getElementById('err');
+
+const bad =
+storeIds.filter(
+ v => !/^[0-9]+$/.test(v) || Number(v) <= 0
+);
+
+if (storeIds.length === 0 || bad.length > 0) {
+err.textContent = bad.length
+ ? 'Store IDs must be whole numbers. Not valid: ' + bad.join(', ')
+ : 'Enter at least one Store ID.';
+return;
+}
+
+err.textContent = '';
+
+try {
 await window
 .__saveUserSettings({
 emailId:
 document
 .getElementById('email')
 .value,
-profileIds
+storeIds
 });
+} catch (ex) {
+err.textContent =
+ 'Failed to save: ' + (ex && ex.message ? ex.message : String(ex));
+}
 });
 </script>
 

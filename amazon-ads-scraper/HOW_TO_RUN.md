@@ -10,9 +10,11 @@
    npx playwright install-deps
    cp .env.example .env
    ```
-4. Edit `.env` and fill in `QUERIES_API_URL`, `RESULTS_API_URL`, `API_TOKEN`.
-5. Open `src/api/queries.ts` and `src/api/results.ts` and replace the TODO
-   placeholders with your real API calls.
+4. Edit `.env` and fill in `VH_API_ROOT` (the VentaWiz server root),
+   `VW_AUTH_URL` (the VentaWiz auth service root) and the service account
+   `VW_CLIENT_ID` (`svc_…`) / `VW_CLIENT_SECRET` (`vws_…`) — ask a VentaWiz
+   admin for one with `scrapper:run`. Optionally set `SCRAPE_STORE_IDS` to skip
+   the setup form.
 
 ## Running in dev mode
 
@@ -20,8 +22,8 @@
 npm run dev
 ```
 
-- On the very first run, a Chrome window opens showing the Email ID / Profile
-  ID form. Fill it in and click **Save and continue**.
+- On the very first run, a Chrome window opens showing the Email ID / Store
+  IDs form (VentaWiz store ids, whole numbers). Fill it in and click **Save and continue**.
 - Chrome then navigates to Amazon. Sign in once and set your delivery pincode.
 - Close the Amazon tab when done — the scraper will continue automatically.
 - Subsequent runs skip onboarding entirely and go straight to scraping.

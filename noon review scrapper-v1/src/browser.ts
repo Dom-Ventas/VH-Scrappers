@@ -1,5 +1,6 @@
 import * as fs from 'fs';
-import { chromium, BrowserContext } from 'playwright';
+import { BrowserContext } from 'playwright';
+import { launchChrome } from './chromeProfile';
 import { config } from './config';
 
 export async function openPersistentContext(
@@ -47,43 +48,21 @@ export async function openPersistentContext(
   // contradicts the real platform and TLS fingerprint, and noon's Saudi
   // storefront rejects the mismatch (the UAE one tolerates it). Chrome's own
   // user agent always matches the machine it is running on.
-  let context: BrowserContext;
+  const context = await launchChrome(
+    config.profileDir,
+    {
+      headless: false,
 
-  try {
-    context = await chromium.launchPersistentContext(
-      config.profileDir,
-      {
-        headless: false,
+      channel: config.chromeChannel,
 
-        channel: config.chromeChannel,
+      viewport: { width: 1920, height: 1080 },
 
-        viewport: { width: 1920, height: 1080 },
-
-        args: [
-          ...windowArgs,
-          '--disable-blink-features=AutomationControlled'
-        ]
-      }
-    );
-  } catch (err) {
-    console.log(
-      '[BROWSER] System Chrome channel launch failed, using bundled browser fallback...'
-    );
-
-    context = await chromium.launchPersistentContext(
-      config.profileDir,
-      {
-        headless: false,
-
-        viewport: { width: 1920, height: 1080 },
-
-        args: [
-          ...windowArgs,
-          '--disable-blink-features=AutomationControlled'
-        ]
-      }
-    );
-  }
+      args: [
+        ...windowArgs,
+        '--disable-blink-features=AutomationControlled'
+      ]
+    }
+  );
 
   // tsx/esbuild compiles with keepNames, which rewrites functions passed to
   // page.evaluate() to call a `__name` helper that only exists in the bundler's

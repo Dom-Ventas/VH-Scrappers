@@ -2,12 +2,53 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 import {
+  config,
   userSettingsPath
 } from './config';
 
 import {
   UserSettings
 } from './types';
+
+/**
+ * Parse store ids typed on the first-run form or passed in SCRAPE_STORE_IDS:
+ * one per line or comma separated, digits only. Returns the ids, or an error
+ * naming the first entry that is not a positive integer.
+ */
+export function parseStoreIds(
+  raw: string
+): { storeIds: number[] } | { error: string } {
+
+  const parts =
+    raw
+      .split(/[\n,]+/)
+      .map(s => s.trim())
+      .filter(Boolean);
+
+  const storeIds: number[] = [];
+
+  for (const part of parts) {
+
+    const n = Number(part);
+
+    if (
+      !/^\d+$/.test(part) ||
+      !Number.isSafeInteger(n) ||
+      n <= 0
+    ) {
+      return {
+        error:
+          `"${part}" is not a store ID — store IDs are whole numbers, e.g. 13`
+      };
+    }
+
+    if (!storeIds.includes(n)) {
+      storeIds.push(n);
+    }
+  }
+
+  return { storeIds };
+}
 
 export function loadUserSettings():
   | UserSettings
@@ -37,37 +78,27 @@ export function loadUserSettings():
       return null;
     }
 
-    let profileIds:
-      string[] = [];
-
-    // New format
+    // Only `storeIds` counts. A legacy VentaHub file with `profileIds` reads
+    // as "no settings": profile ids are not store ids, so the first-run form
+    // has to be shown again to collect the real ones.
     if (
-      Array.isArray(
-        parsed.profileIds
+      !Array.isArray(
+        parsed.storeIds
       )
     ) {
-
-      profileIds =
-        parsed.profileIds
-          .map((p: any) =>
-            String(p).trim()
-          )
-          .filter(Boolean);
+      return null;
     }
 
-    // Legacy format
-    else if (
-      typeof parsed.profileId ===
-      'string'
-    ) {
-
-      profileIds = [
-        parsed.profileId.trim()
-      ];
-    }
+    const result =
+      parseStoreIds(
+        parsed.storeIds
+          .map(String)
+          .join(',')
+      );
 
     if (
-      profileIds.length === 0
+      'error' in result ||
+      result.storeIds.length === 0
     ) {
       return null;
     }
@@ -76,7 +107,8 @@ export function loadUserSettings():
       emailId:
         parsed.emailId,
 
-      profileIds,
+      storeIds:
+        result.storeIds,
 
       firstRunCompletedAt:
         parsed.firstRunCompletedAt ||
@@ -87,6 +119,34 @@ export function loadUserSettings():
 
     return null;
   }
+}
+
+/**
+ * Store ids to scrape: SCRAPE_STORE_IDS when set (the agent passes it), else
+ * the ids saved at first run. A malformed SCRAPE_STORE_IDS throws rather than
+ * silently scraping the wrong stores.
+ */
+export function resolveStoreIds(
+  settings: UserSettings | null
+): number[] {
+
+  if (config.storeIdsEnv) {
+
+    const result =
+      parseStoreIds(
+        config.storeIdsEnv
+      );
+
+    if ('error' in result) {
+      throw new Error(
+        `SCRAPE_STORE_IDS: ${result.error}`
+      );
+    }
+
+    return result.storeIds;
+  }
+
+  return settings?.storeIds ?? [];
 }
 
 export function saveUserSettings(

@@ -9,8 +9,8 @@ way it is.
 
 | Field | Source |
 |---|---|
-| `rating`, `ratingCount` | product JSON-LD `aggregateRating` |
-| `criticalReviews` | `REVIEWS` widgets, most-recent-first, filtered to 1–2 star |
+| `rating`, `rating_count` | product JSON-LD `aggregateRating` |
+| `critical_reviews` | `REVIEWS` widgets, most-recent-first, filtered to 1–2 star |
 | `aplus_content` | `"yes"` / `"no"` — Rich Product Description present |
 | `delivery_promise_days` | "Delivery by 21 Aug, Fri" → days from today |
 
@@ -50,7 +50,10 @@ cp queries.example.json queries.json
 npm run dev
 ```
 
-The first run opens a visible browser and asks for your email and profile IDs.
+The first run opens a visible browser and asks for your email and VentaWiz
+**store IDs** (whole numbers, one per line or comma separated). A legacy
+`user-settings.json` holding only VentaHub `profileIds` is ignored and the form
+shown again; when the agent passes `SCRAPE_STORE_IDS` the form is skipped.
 It then opens Flipkart, where you **log in and set your delivery pincode by
 hand** in that same session. Both persist in the Chrome profile and are reused
 headlessly on later runs.
@@ -84,33 +87,49 @@ npm run build   # tsc
 npm run build:exe
 ```
 
+## Service account
+
+There is no shared token. Every VentaWiz call is authenticated with a
+**VentaWiz service account** — `VW_CLIENT_ID` (`svc_…`) + `VW_CLIENT_SECRET`
+(`vws_…`). [`src/api/auth.ts`](src/api/auth.ts) exchanges them for a
+short-lived bearer token at `POST {VW_AUTH_URL}/v1/token` (OAuth
+`client_credentials`), caches it until 60 s before expiry, and re-exchanges
+once on a 401. When the agent launches this scraper it passes all three
+variables; for a standalone run put them in `.env`. Missing credentials print
+`[FAIL]` + `[DONE]` and the run exits without opening Chrome; a rejected
+id/secret reads `client id/secret rejected — check the service account`, and a
+403 reads `service account lacks scrapper:run`.
+
+A VentaWiz admin creates the account in VentaWiz-Auth —
+`POST /v1/service-principals` (the secret is shown **once**) — and grants it
+`scrapper:run` with `POST /v1/grants`, at client or store scope. See the
+[root README](../README.md#2-credentials--ventawiz-service-accounts).
+
 ## Backend API
 
-Configured in `.env`. Flipkart has its own endpoint pair, separate from the
-Amazon scraper's:
+VentaWiz. The server root comes from `VH_API_ROOT` (default in
+`src/embedded.ts`); `QUERIES_API_URL` / `RESULTS_API_URL` override the full
+URLs, and the agent sets them along with `VW_AUTH_URL`, `VW_CLIENT_ID`,
+`VW_CLIENT_SECRET`, `SCRAPE_STORE_IDS` and `SCRAPE_MARKETPLACE`.
 
 ```
-API_TOKEN=<token>
-QUERIES_API_URL=https://<host>/backend/api/v1/scrapper/flipkart/review-queries
-RESULTS_API_URL=https://<host>/backend/api/v1/scrapper/flipkart/reviews
+GET  /v1/scrapper/review-queries?store_id=13&store_id=16&marketplace=flipkart&page=1&limit=100
+     -> { items: [ { product_ids, mp_product_id, short_code, store_id } ], pagination }
+POST /v1/scrapper/reviews   (one per queue item)
+     { store_id, product_ids, rating, rating_count, critical_reviews: { reviews: [...] },
+       aplus_content, delivery_promise_days, pincode_applied }
 ```
 
-Queries are fetched per profile ID; each scraped product is POSTed as one JSON
-body. `api/queries.ts` accepts either `pid` or `asin` on the way in, so it works
-whichever field name the backend emits.
+The whole queue is fetched once per run (store ids 50 per request, every page),
+then each item is scraped and posted. `mp_product_id` is the Flipkart PID/FSN;
+`store_id` and `product_ids` are posted back verbatim. Missing values are
+`null`. A 404 on the POST means a product id is not a focused listing of that
+store and is reported as `[FAIL]` with the body.
 
-**Blanking all three runs the scraper with no server at all** — queries are read
-from `queries.json` and results written to `results/<profileId>-<date>.jsonl`,
-one JSON object per line, byte-identical to what would have been POSTed. Useful
-for scraping or debugging offline.
-
-```json
-{
-  "default": [
-    { "productId": 1, "pid": "ACCGJP5QSJFP7HAP", "shortCode": "FKIN" }
-  ]
-}
-```
+`api/queries.ts` and `api/results.ts` also keep a LOCAL mode for an empty URL:
+queries from `queries.json` (an array of queue items, see
+`queries.example.json`) and results appended to
+`results/store-<store_id>-<date>.jsonl`.
 
 If the backend is unreachable the run fails loudly with the cause
 (`ECONNREFUSED`, DNS, timeout, TLS) rather than a stack trace, and never

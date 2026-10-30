@@ -1,7 +1,11 @@
+/** One product page to scrape — a VentaWiz review-queries item. */
 export interface Query {
-  productId: number;
+  /** Every focused listing this page answers for; posted back verbatim. */
+  productIds: number[];
+  /** noon's zsku / SKU (the queue's `mp_product_id`). */
   sku: string;
   shortCode: string;
+  storeId: number;
 }
 
 export interface Review {
@@ -33,21 +37,19 @@ export interface ProductReviewResult {
   availability?: string;
 }
 
+/** POST body for /v1/scrapper/reviews — one per queue item. */
 export interface ScrapedResult {
-  emailId: string;
-  profileId: string;
-  productId: number;
-  sku: string;
-  shortCode: string;
-  rating: number;
-  ratingCount: number;
-  criticalReviews: Record<string, any>;
+  store_id: number;
+  product_ids: number[];
+  /** 0–5, at most 2 decimals; null when unreadable. */
+  rating: number | null;
+  rating_count: number | null;
+  critical_reviews: { reviews: Review[] } | null;
+  /** noon has no A+ module, so always null. */
+  aplus_content: 'yes' | 'no' | null;
+  delivery_promise_days: number | null;
 
-  // Both casings are sent so one backend handler can serve the Amazon,
-  // Flipkart and Noon scrapers unchanged.
-  delivery_promise_days?: number | null;
-  deliveryPromiseDays?: number | null;
-
+  // noon-only extras: the backend ignores unknown fields, kept for the record.
   price?: number | null;
   currency?: string;
   availability?: string;
@@ -55,6 +57,7 @@ export interface ScrapedResult {
 
 export interface UserSettings {
   emailId: string;
-  profileIds: string[];
+  /** VentaWiz store ids (positive integers). */
+  storeIds: number[];
   firstRunCompletedAt: string;
 }

@@ -21,6 +21,7 @@ import { loadUserSettings } from './userSettings';
 import { runFirstLaunchFlow } from './firstRun';
 import { initLogger } from './logger';
 
+import { credentialsProblem, serviceAccountId } from './api/auth';
 import { fetchQueries } from './api/queries';
 import { postScrapedResult } from './api/results';
 
@@ -50,15 +51,32 @@ async function main() {
     `[BOOT] max critical reviews per SKU: ${config.maxCriticalReviews}`
   );
 
+  // Store ids come from the agent (SCRAPE_STORE_IDS) when it launched us,
+  // else from user-settings.json. Only a standalone run with neither needs the
+  // first-run form, which must be on-screen.
   const existingSettings = loadUserSettings();
 
+  const needsFirstRun =
+    config.envStoreIds.length === 0 &&
+    !existingSettings;
+
   const visible =
-    !existingSettings ||
+    needsFirstRun ||
     process.env.BROWSER_VISIBLE === '1';
 
   console.log(
     `[BOOT] browser window: ${visible ? 'visible' : 'off-screen'}`
   );
+
+  // No service account → nothing can be fetched or posted. Fail before
+  // opening Chrome, keeping the [FAIL]/[DONE] markers the agent counts.
+  const credentialsError = credentialsProblem();
+  if (credentialsError) {
+    console.error(`[FAIL] ${credentialsError}`);
+    console.log('[DONE] no SKUs processed (no service-account credentials)');
+    return;
+  }
+  console.log(`[BOOT] service account: ${serviceAccountId()} via ${config.authRoot}`);
 
   const context =
     await openPersistentContext({ visible });
@@ -67,17 +85,27 @@ async function main() {
 
   try {
 
-    let settings = existingSettings;
+    let storeIds: number[];
 
-    if (!settings) {
+    if (config.envStoreIds.length > 0) {
 
-      settings = await runFirstLaunchFlow(page);
+      storeIds = config.envStoreIds;
+
+      console.log(
+        `[BOOT] store ids from SCRAPE_STORE_IDS: [${storeIds.join(', ')}]`
+      );
+
+    } else if (existingSettings) {
+
+      storeIds = existingSettings.storeIds;
+
+      console.log(
+        `[BOOT] loaded settings: emailId="${existingSettings.emailId}" storeIds=[${storeIds.join(', ')}]`
+      );
 
     } else {
 
-      console.log(
-        `[BOOT] loaded settings: emailId="${settings.emailId}" profileIds=[${settings.profileIds.join(', ')}]`
-      );
+      storeIds = (await runFirstLaunchFlow(page)).storeIds;
     }
 
     const scrapePage =
@@ -85,131 +113,115 @@ async function main() {
         ? await context.newPage()
         : page;
 
-    for (
-      let p = 0;
-      p < settings.profileIds.length;
-      p++
-    ) {
+    console.log(
+      `[QUEUE] fetching SKUs for ${storeIds.length} store(s), marketplace=${config.marketplace}`
+    );
 
-      const profileId = settings.profileIds[p];
+    let queries;
 
-      console.log(
-        `[PROFILE ${p + 1}/${settings.profileIds.length}] fetching SKUs for "${profileId}"`
+    try {
+
+      queries = await fetchQueries(storeIds);
+
+    } catch (err) {
+
+      console.error(
+        `[FAIL] fetchQueries for storeIds=[${storeIds.join(', ')}]`,
+        err
       );
 
-      let queries;
+      console.log('[DONE] no SKUs processed');
+
+      return;
+    }
+
+    const totalFromApi = queries.length;
+
+    if (config.shortCodeFilter.length > 0) {
+
+      const allow = new Set(config.shortCodeFilter);
+
+      queries =
+        queries.filter(q =>
+          allow.has(q.shortCode.toUpperCase())
+        );
+
+      console.log(
+        `[QUEUE] ${queries.length}/${totalFromApi} SKUs match SCRAPE_SHORT_CODES=[${config.shortCodeFilter.join(',')}]`
+      );
+
+    } else {
+
+      console.log(
+        `[QUEUE] ${queries.length} SKUs to scrape`
+      );
+    }
+
+    for (let i = 0; i < queries.length; i++) {
+
+      const q = queries[i];
+
+      const label =
+        `[store ${q.storeId}] [${i + 1}/${queries.length}] "${q.sku}"`;
 
       try {
 
-        queries = await fetchQueries(profileId);
+        const marketplace =
+          resolveMarketplace(q.shortCode);
+
+        const product =
+          await retry(
+            () => scrapeSku(scrapePage, marketplace, q.sku),
+            3,
+            3000
+          );
+
+        console.log(
+          `[FILTER] ${label} -> ${product.criticalReviews?.length || 0} critical reviews | ` +
+            `delivery: ${product.deliveryPromiseDays ?? 'null'} day(s)`
+        );
+
+        await postScrapedResult({
+          store_id: q.storeId,
+
+          product_ids: q.productIds,
+
+          rating: toRating(product.rating, product.totalRatings),
+
+          rating_count: toCount(product.totalRatings),
+
+          critical_reviews: {
+            reviews: product.criticalReviews ?? []
+          },
+
+          // noon has no A+ content module (see README).
+          aplus_content: null,
+
+          delivery_promise_days:
+            toCount(product.deliveryPromiseDays),
+
+          price: product.price ?? null,
+          currency: product.currency,
+          availability: product.availability
+        });
+
+        console.log(`[OK] ${label} -> sent successfully`);
 
       } catch (err) {
 
-        console.error(
-          `[FAIL] fetchQueries for profileId="${profileId}"`,
-          err
-        );
-
-        continue;
+        console.error(`[FAIL] ${label}`, err);
       }
 
-      const totalFromApi = queries.length;
+      if (i < queries.length - 1) {
 
-      if (config.shortCodeFilter.length > 0) {
-
-        const allow = new Set(config.shortCodeFilter);
-
-        queries =
-          queries.filter(q =>
-            allow.has(q.shortCode.toUpperCase())
-          );
+        const secs =
+          Math.round(config.scrapeDelayMs / 1000);
 
         console.log(
-          `[PROFILE ${profileId}] ${queries.length}/${totalFromApi} SKUs match SCRAPE_SHORT_CODES=[${config.shortCodeFilter.join(',')}]`
+          `[WAIT] sleeping ${secs}s before next SKU...`
         );
 
-      } else {
-
-        console.log(
-          `[PROFILE ${profileId}] ${queries.length} SKUs to scrape`
-        );
-      }
-
-      for (let i = 0; i < queries.length; i++) {
-
-        const q = queries[i];
-
-        const label =
-          `[${profileId}] [${i + 1}/${queries.length}] "${q.sku}"`;
-
-        try {
-
-          const marketplace =
-            resolveMarketplace(q.shortCode);
-
-          const product =
-            await retry(
-              () => scrapeSku(scrapePage, marketplace, q.sku),
-              3,
-              3000
-            );
-
-          console.log(
-            `[FILTER] ${label} -> ${product.criticalReviews?.length || 0} critical reviews | ` +
-              `delivery: ${product.deliveryPromiseDays ?? 'null'} day(s)`
-          );
-
-          await postScrapedResult({
-            emailId: settings.emailId,
-
-            profileId,
-
-            productId: q.productId,
-
-            shortCode: q.shortCode,
-
-            sku: q.sku,
-
-            rating: product.rating,
-
-            ratingCount: product.totalRatings,
-
-            criticalReviews: {
-              reviews: product.criticalReviews ?? []
-            },
-
-            delivery_promise_days:
-              product.deliveryPromiseDays ?? null,
-            deliveryPromiseDays:
-              product.deliveryPromiseDays ?? null,
-
-            price: product.price ?? null,
-            currency: product.currency,
-            availability: product.availability
-          });
-
-          console.log(`[OK] ${label} -> sent successfully`);
-
-        } catch (err) {
-
-          console.error(`[FAIL] ${label}`, err);
-        }
-
-        const isLastQueryOfLastProfile =
-          p === settings.profileIds.length - 1 &&
-          i === queries.length - 1;
-
-        if (!isLastQueryOfLastProfile) {
-
-          const secs =
-            Math.round(config.scrapeDelayMs / 1000);
-
-          console.log(
-            `[WAIT] sleeping ${secs}s before next SKU...`
-          );
-
-          await sleep(config.scrapeDelayMs);
-        }
+        await sleep(config.scrapeDelayMs);
       }
     }
 
@@ -219,6 +231,40 @@ async function main() {
 
     await context.close();
   }
+}
+
+/** Integer >= 0, else null. */
+function toCount(
+  value: number | null | undefined
+): number | null {
+
+  return typeof value === 'number' &&
+    Number.isInteger(value) &&
+    value >= 0
+    ? value
+    : null;
+}
+
+/**
+ * 0–5 rounded to 2 decimals, else null. A product with no ratings yet reports
+ * 0 — that is "no rating", not a zero-star average, so it goes out as null.
+ */
+function toRating(
+  value: number | null | undefined,
+  count: number | null | undefined
+): number | null {
+
+  if (
+    typeof value !== 'number' ||
+    !Number.isFinite(value) ||
+    value < 0 ||
+    value > 5 ||
+    (value === 0 && !count)
+  ) {
+    return null;
+  }
+
+  return Math.round(value * 100) / 100;
 }
 
 main().catch(err => {

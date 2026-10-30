@@ -1,7 +1,7 @@
 import * as fs from 'fs';
 import * as path from 'path';
 
-import { userSettingsPath } from './config';
+import { parseStoreIds, userSettingsPath } from './config';
 import { UserSettings } from './types';
 
 export function loadUserSettings():
@@ -25,33 +25,27 @@ export function loadUserSettings():
       return null;
     }
 
-    let profileIds: string[] = [];
-
-    // New format
-    if (Array.isArray(parsed.profileIds)) {
-
-      profileIds =
-        parsed.profileIds
-          .map((p: any) => String(p).trim())
-          .filter(Boolean);
+    // Only VentaWiz `storeIds` count. A legacy file holding just VentaHub
+    // `profileIds` / `profileId` is treated as "no settings" — those ids are
+    // not store ids — so a standalone run shows the first-run form again.
+    if (!Array.isArray(parsed.storeIds)) {
+      return null;
     }
 
-    // Legacy format
-    else if (
-      typeof parsed.profileId === 'string'
-    ) {
+    const storeIds =
+      parseStoreIds(
+        parsed.storeIds.join(','),
+        'user-settings.json storeIds'
+      );
 
-      profileIds = [parsed.profileId.trim()];
-    }
-
-    if (profileIds.length === 0) {
+    if (storeIds.length === 0) {
       return null;
     }
 
     return {
       emailId: parsed.emailId,
 
-      profileIds,
+      storeIds,
 
       firstRunCompletedAt:
         parsed.firstRunCompletedAt ||

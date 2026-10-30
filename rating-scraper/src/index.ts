@@ -21,6 +21,7 @@ import { config, envFilesLoaded } from './config';
 import { loadUserSettings } from './userSettings';
 import { runFirstLaunchFlow } from './firstRun';
 
+import { credentialsProblem, serviceAccountId } from './api/auth';
 import { fetchQueries } from './api/queries';
 import { postScrapedResult } from './api/results';
 
@@ -48,11 +49,20 @@ async function main() {
     `[BOOT] scrape delay: ${config.scrapeDelayMs}ms`
   );
 
+  // Store ids: SCRAPE_STORE_IDS (set by the VentaWiz agent) wins, else the
+  // saved user-settings.json. With env ids the first-run form is never shown.
+  const envStoreIds =
+    config.envStoreIds;
+
   const existingSettings =
     loadUserSettings();
 
+  const needsFirstRun =
+    envStoreIds.length === 0 &&
+    !existingSettings;
+
   const visible =
-    !existingSettings ||
+    needsFirstRun ||
     process.env.BROWSER_VISIBLE === '1';
 
   console.log(
@@ -62,6 +72,16 @@ async function main() {
         : 'off-screen'
     }`
   );
+
+  // No service account → nothing can be fetched or posted. Fail before
+  // opening Chrome, keeping the [FAIL]/[DONE] markers the agent counts.
+  const credentialsError = credentialsProblem();
+  if (credentialsError) {
+    console.error(`[FAIL] ${credentialsError}`);
+    console.log('[DONE] no ASINs processed (no service-account credentials)');
+    return;
+  }
+  console.log(`[BOOT] service account: ${serviceAccountId()} via ${config.authRoot}`);
 
   const context =
     await openPersistentContext({
@@ -73,195 +93,188 @@ async function main() {
 
   try {
 
-    let settings =
-      existingSettings;
+    let storeIds: number[];
 
-    if (!settings) {
+    if (envStoreIds.length > 0) {
 
-      settings =
-        await runFirstLaunchFlow(
-          page
-        );
+      storeIds = envStoreIds;
 
-      if (
-        page.isClosed()
-      ) {
-        // same pattern as Ad Scraper
-      }
+      console.log(
+        `[BOOT] store ids from SCRAPE_STORE_IDS: [${storeIds.join(', ')}]`
+      );
+
+    } else if (existingSettings) {
+
+      storeIds =
+        existingSettings.storeIds;
+
+      console.log(
+        `[BOOT] loaded settings: emailId="${existingSettings.emailId}" storeIds=[${storeIds.join(', ')}]`
+      );
 
     } else {
 
-      console.log(
-        `[BOOT] loaded settings: emailId="${settings.emailId}" profileIds=[${settings.profileIds.join(', ')}]`
-      );
+      // The first-run flow may close the page when the user closes the
+      // login tab; a fresh one is opened below.
+      storeIds =
+        (await runFirstLaunchFlow(
+          page
+        )).storeIds;
     }
+
+    console.log(
+      `[BOOT] marketplace: ${config.marketplace}`
+    );
 
     const scrapePage =
       page.isClosed()
         ? await context.newPage()
         : page;
 
-    for (
-      let p = 0;
-      p <
-      settings.profileIds.length;
-      p++
-    ) {
+    // The whole queue, once, up front: every store, every page.
+    let queries;
 
-      const profileId =
-        settings.profileIds[p];
+    try {
 
-      console.log(
-        `[PROFILE ${p + 1}/${settings.profileIds.length}] fetching ASINs for "${profileId}"`
+      queries =
+        await fetchQueries(
+          storeIds
+        );
+
+    } catch (err) {
+
+      console.error(
+        `[FAIL] fetchQueries for storeIds=[${storeIds.join(', ')}]`,
+        err
       );
 
-      let queries;
+      console.log(
+        '[DONE] no ASINs processed (queue fetch failed)'
+      );
+
+      return;
+    }
+
+    const totalFromApi =
+      queries.length;
+
+    if (
+      config.shortCodeFilter
+        .length > 0
+    ) {
+
+      const allow =
+        new Set(
+          config.shortCodeFilter
+        );
+
+      queries =
+        queries.filter(
+          q =>
+            allow.has(
+              q.shortCode.toUpperCase()
+            )
+        );
+
+      console.log(
+        `[QUEUE] ${queries.length}/${totalFromApi} ASINs match SCRAPE_SHORT_CODES=[${config.shortCodeFilter.join(',')}]`
+      );
+
+    } else {
+
+      console.log(
+        `[QUEUE] ${queries.length} ASINs to scrape`
+      );
+    }
+
+    for (
+      let i = 0;
+      i < queries.length;
+      i++
+    ) {
+
+      const q =
+        queries[i];
+
+      const label =
+        `[store ${q.storeId}] [${i + 1}/${queries.length}] "${q.asin}"`;
 
       try {
 
-        queries =
-          await fetchQueries(
-            profileId
+        const marketplace =
+          resolveMarketplace(
+            q.shortCode
           );
+
+        const product =
+          await scrapeAsin(
+            scrapePage,
+            marketplace.url,
+            q.asin
+          );
+
+        console.log(
+          `[FILTER] ${label} -> ${product.criticalReviews?.length || 0} critical reviews | A+ Content: ${product.aplus_content} | Delivery Promise: ${product.deliveryPromiseDays ?? 'null'} day(s)`
+        );
+
+        await postScrapedResult({
+          store_id: q.storeId,
+
+          product_ids: q.productIds,
+
+          rating: toRating(
+            product.rating
+          ),
+
+          // parseIntSafe() returns 0 for "no count found"; a page with no
+          // average rating has no readable count either, so 0 is sent as null.
+          rating_count:
+            toRating(product.rating) === null
+              ? null
+              : toCount(product.totalRatings),
+
+          critical_reviews: {
+            reviews: product.criticalReviews ?? []
+          },
+
+          aplus_content:
+            product.aplus_content ?? null,
+
+          delivery_promise_days:
+            toCount(
+              product.deliveryPromiseDays ?? null
+            )
+        });
+
+        console.log(
+          `[OK] ${label} -> sent for product_ids=[${q.productIds.join(', ')}]`
+        );
 
       } catch (err) {
 
         console.error(
-          `[FAIL] fetchQueries for profileId="${profileId}"`,
+          `[FAIL] ${label}`,
           err
         );
-
-        continue;
       }
-
-      const totalFromApi =
-        queries.length;
 
       if (
-        config.shortCodeFilter
-          .length > 0
+        i < queries.length - 1
       ) {
 
-        const allow =
-          new Set(
-            config.shortCodeFilter
-          );
-
-        queries =
-          queries.filter(
-            q =>
-              allow.has(
-                q.shortCode.toUpperCase()
-              )
+        const secs =
+          Math.round(
+            config.scrapeDelayMs /
+              1000
           );
 
         console.log(
-          `[PROFILE ${profileId}] ${queries.length}/${totalFromApi} ASINs match SCRAPE_SHORT_CODES=[${config.shortCodeFilter.join(',')}]`
+          `[WAIT] sleeping ${secs}s before next ASIN...`
         );
 
-      } else {
-
-        console.log(
-          `[PROFILE ${profileId}] ${queries.length} ASINs to scrape`
+        await sleep(
+          config.scrapeDelayMs
         );
-      }
-
-      for (
-        let i = 0;
-        i < queries.length;
-        i++
-      ) {
-
-        const q =
-          queries[i];
-
-        const label =
-          `[${profileId}] [${i + 1}/${queries.length}] "${q.asin}"`;
-
-        try {
-
-          const marketplace =
-            resolveMarketplace(
-              q.shortCode
-            );
-
-          const product =
-            await scrapeAsin(
-              scrapePage,
-              marketplace.url,
-              q.asin
-            );
-
-          console.log(
-            `[FILTER] ${label} -> ${product.criticalReviews?.length || 0} critical reviews | A+ Content: ${product.aplus_content} | Delivery Promise: ${product.deliveryPromiseDays ?? 'null'} day(s)`
-          );
-
-          await postScrapedResult({
-            emailId: settings.emailId,
-
-            profileId,
-
-            productId: q.productId,
-
-            shortCode: q.shortCode,
-
-            asin: q.asin,
-
-            rating: product.rating,
-
-            ratingCount: product.totalRatings,
-
-            criticalReviews: {
-              reviews: product.criticalReviews ?? []
-            },
-
-            aplus_content: product.aplus_content || "no",
-
-            aplusContent: product.aplusContent || "no",
-
-            delivery_promise_days:
-              product.deliveryPromiseDays ?? null,
-
-            deliveryPromiseDays:
-              product.deliveryPromiseDays ?? null
-          });
-
-          console.log(
-            `[OK] ${label} -> sent successfully`
-          );
-
-        } catch (err) {
-
-          console.error(
-            `[FAIL] ${label}`,
-            err
-          );
-        }
-
-        const isLastQueryOfLastProfile =
-          p ===
-            settings.profileIds.length - 1 &&
-          i ===
-            queries.length - 1;
-
-        if (
-          !isLastQueryOfLastProfile
-        ) {
-
-          const secs =
-            Math.round(
-              config.scrapeDelayMs /
-                1000
-            );
-
-          console.log(
-            `[WAIT] sleeping ${secs}s before next ASIN...`
-          );
-
-          await sleep(
-            config.scrapeDelayMs
-          );
-        }
       }
     }
 
@@ -273,6 +286,39 @@ async function main() {
 
     await context.close();
   }
+}
+
+/**
+ * Average star rating for VentaWiz: 0–5 with at most 2 decimals, else null.
+ * Amazon ratings start at 1, so 0 is parseFloatSafe()'s "not found" and is
+ * sent as null rather than as a real zero.
+ */
+function toRating(
+  v: number | null | undefined
+): number | null {
+
+  if (
+    typeof v !== 'number' ||
+    !Number.isFinite(v) ||
+    v <= 0 ||
+    v > 5
+  ) {
+    return null;
+  }
+
+  return Math.round(v * 100) / 100;
+}
+
+/** Whole number >= 0, else null. */
+function toCount(
+  v: number | null | undefined
+): number | null {
+
+  return typeof v === 'number' &&
+    Number.isFinite(v) &&
+    v >= 0
+    ? Math.round(v)
+    : null;
 }
 
 main().catch(

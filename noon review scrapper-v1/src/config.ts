@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as dotenv from 'dotenv';
 import {
   EMBEDDED_API_ROOT,
-  EMBEDDED_TOKEN,
+  EMBEDDED_AUTH_ROOT,
   QUERY_ENDPOINT,
   RESULTS_ENDPOINT,
 } from './embedded';
@@ -66,6 +66,35 @@ function defaultProfileDir(): string {
 // joining an endpoint never produces a double slash.
 const API_ROOT = (process.env.VH_API_ROOT?.trim() || EMBEDDED_API_ROOT).replace(/\/+$/, '');
 
+/**
+ * Parse VentaWiz store ids from a comma/newline separated string. Each must be
+ * a positive integer; anything else is reported (so a typo in the agent's env
+ * is visible in the log) and dropped. Duplicates are removed, order kept.
+ */
+export function parseStoreIds(
+  raw: string,
+  source: string
+): number[] {
+
+  const ids: number[] = [];
+
+  for (const token of raw.split(/[\s,]+/).map(s => s.trim()).filter(Boolean)) {
+
+    const n = /^\d+$/.test(token) ? Number(token) : NaN;
+
+    if (!Number.isSafeInteger(n) || n <= 0) {
+      console.warn(
+        `[CONFIG] ${source}: ignoring "${token}" — store ids are positive integers`
+      );
+      continue;
+    }
+
+    if (!ids.includes(n)) ids.push(n);
+  }
+
+  return ids;
+}
+
 export const config = {
   // Resolved to an absolute path so "./chrome-profile" cannot silently point at
   // a different folder depending on where the process was started from.
@@ -103,10 +132,28 @@ export const config = {
     process.env.RESULTS_API_URL ||
     `${API_ROOT}${RESULTS_ENDPOINT}`,
 
-  apiToken:
-    process.env.API_TOKEN ||
-    EMBEDDED_TOKEN,
+  // VentaWiz service account (OAuth client_credentials, see src/api/auth.ts).
+  // The agent passes all three to every child; a standalone run reads them
+  // from the .env. The secret is never logged.
+  authRoot: (process.env.VW_AUTH_URL?.trim() || EMBEDDED_AUTH_ROOT).replace(/\/+$/, ''),
+  clientId: process.env.VW_CLIENT_ID?.trim() || '',
+  clientSecret: process.env.VW_CLIENT_SECRET?.trim() || '',
 
+  /**
+   * VentaWiz store ids set by the agent (SCRAPE_STORE_IDS=13,16). When set
+   * they win over user-settings.json and the first-run form is not needed.
+   */
+  envStoreIds: parseStoreIds(
+    process.env.SCRAPE_STORE_IDS || '',
+    'SCRAPE_STORE_IDS'
+  ),
+
+  /** Sent as `marketplace=` on the queue request so only noon stores come back. */
+  marketplace:
+    (process.env.SCRAPE_MARKETPLACE || '').trim().toLowerCase() ||
+    'noon',
+
+  /** Optional local allow-list on each queue item's `short_code`. */
   shortCodeFilter: (
     process.env.SCRAPE_SHORT_CODES || ''
   )

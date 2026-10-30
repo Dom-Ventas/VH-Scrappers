@@ -112,6 +112,36 @@ async function hasAnySponsored(card: Locator, selectors: readonly string[]): Pro
   return false;
 }
 
+/**
+ * Sponsored check on its own, so the scrape loop can re-run it after a delay
+ * without re-extracting every other field.
+ *
+ * The ADVIEW impression wrapper and the card's `en_` tracking id are attached
+ * by Flipkart's client-side ad code, which can land AFTER the product grid has
+ * painted on a slow machine or connection. An extraction pass that runs in
+ * that window sees every card as organic, and the backend then fills
+ * comp1..5 and org1..5 from the same five organic products — the duplicated
+ * rows seen in Data Vault. `scrapeSearchTerm` calls this a second time when
+ * the first pass found no ads at all.
+ */
+export async function detectSponsored(card: Locator): Promise<boolean> {
+  return hasAnySponsored(card, SELECTORS.sponsoredBadge);
+}
+
+/**
+ * Prefix of the card's own `data-tkid`, for the zero-ads diagnostic line.
+ * `en_…` on a card the detector called organic means selector drift;
+ * `<uuid>…` on every card means Flipkart served no paid slots to this session.
+ */
+export async function ownTrackingIdPrefix(card: Locator): Promise<string> {
+  try {
+    const tkid = (await card.locator('> div[data-tkid]').first().getAttribute('data-tkid')) || '';
+    return tkid.slice(0, 8);
+  } catch {
+    return '';
+  }
+}
+
 /** Whole-card text, used as the fallback source for every field. */
 async function cardText(card: Locator): Promise<string> {
   try {

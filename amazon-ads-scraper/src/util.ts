@@ -72,6 +72,19 @@ export function parseDeliveryDays(
   if (/\btoday\b/i.test(text)) {
     candidates.push(today);
   }
+  // Quick-commerce phrasing carries no date at all: "FREE delivery in 10
+  // minutes", "delivery in 2 hours". That is same-day, i.e. 0 days. Without
+  // this these rows landed with a NULL delivery value.
+  if (/\bin\s+\d+\s*(?:minute|min|hour|hr)s?\b/i.test(text)) {
+    candidates.push(today);
+  }
+  // "delivery in 3 days" — a relative span rather than a date.
+  const inDays = text.match(/\bin\s+(\d{1,2})\s*days?\b/i);
+  if (inDays) {
+    const d = new Date(today.getTime());
+    d.setDate(d.getDate() + parseInt(inDays[1], 10));
+    candidates.push(d);
+  }
   if (/\btomorrow\b/i.test(text)) {
     const d = new Date(today.getTime());
     d.setDate(d.getDate() + 1);

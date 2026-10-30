@@ -4,7 +4,7 @@ import * as fs from 'fs';
 import * as dotenv from 'dotenv';
 import {
   EMBEDDED_API_ROOT,
-  EMBEDDED_TOKEN,
+  EMBEDDED_AUTH_ROOT,
   QUERY_ENDPOINT,
   RESULTS_ENDPOINT,
 } from './embedded';
@@ -126,17 +126,33 @@ export const config = {
     process.env.PINCODE_CHECK_PID?.trim() ||
     'ACCGJP5QSJFP7HAP',
 
-  // Backend integration is pending. Empty means LOCAL mode: queries are read
-  // from queries.json and results are written to results/*.jsonl. Filling these
-  // in switches to API mode with no code change.
+  // Sent as `marketplace=` on every queue request so the backend refuses any
+  // store that is not a Flipkart store. The agent sets it from its assignment.
+  marketplace:
+    process.env.SCRAPE_MARKETPLACE?.trim().toLowerCase() ||
+    'flipkart',
+
+  // VentaWiz store ids from SCRAPE_STORE_IDS (comma-separated, set by the
+  // agent). Raw string — parsed by resolveStoreIds() in userSettings.ts. Empty
+  // means use the ids saved at first run.
+  storeIdsEnv:
+    process.env.SCRAPE_STORE_IDS?.trim() || '',
+
+  // Empty means LOCAL mode: queries are read from queries.json and results are
+  // written to results/*.jsonl. Only reachable by blanking the URLs in code —
+  // env values fall back to the embedded API root.
   queriesApiUrl:
     process.env.QUERIES_API_URL?.trim() || `${API_ROOT}${QUERY_ENDPOINT}`,
 
   resultsApiUrl:
     process.env.RESULTS_API_URL?.trim() || `${API_ROOT}${RESULTS_ENDPOINT}`,
 
-  apiToken:
-    process.env.API_TOKEN?.trim() || EMBEDDED_TOKEN,
+  // VentaWiz service account (OAuth client_credentials, see src/api/auth.ts).
+  // The agent passes all three to every child; a standalone run reads them
+  // from the .env. The secret is never logged.
+  authRoot: (process.env.VW_AUTH_URL?.trim() || EMBEDDED_AUTH_ROOT).replace(/\/+$/, ''),
+  clientId: process.env.VW_CLIENT_ID?.trim() || '',
+  clientSecret: process.env.VW_CLIENT_SECRET?.trim() || '',
 
   shortCodeFilter: (
     process.env.SCRAPE_SHORT_CODES || ''

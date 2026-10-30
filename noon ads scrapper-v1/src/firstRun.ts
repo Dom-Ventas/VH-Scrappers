@@ -19,20 +19,33 @@ function loadFirstRunHtml(): string {
     <h2>Noon Search Term Scrapper — First Launch</h2>
     <form id="f">
       <p><label>Email ID <input id="emailId" required /></label></p>
-      <p><label>Profile IDs (one per line) <textarea id="profileIds" rows="4" required></textarea></label></p>
+      <p><label>Store IDs (one per line or comma-separated, digits only) <textarea id="storeIds" rows="4" required></textarea></label></p>
       <p><button type="submit">Save</button></p>
+      <p id="status"></p>
     </form>
     <script>
       document.getElementById('f').addEventListener('submit', async (e) => {
         e.preventDefault();
-        const profileIds = document.getElementById('profileIds').value
-          .split(/[\\n,]+/)
+        const storeIds = document.getElementById('storeIds').value
+          .split(/[\\s,]+/)
           .map((s) => s.trim())
           .filter(Boolean);
-        await window.__saveUserSettings({
-          emailId: document.getElementById('emailId').value.trim(),
-          profileIds,
-        });
+        const bad = storeIds.filter((s) => !/^[0-9]+$/.test(s) || Number(s) <= 0);
+        const status = document.getElementById('status');
+        if (storeIds.length === 0 || bad.length > 0) {
+          status.textContent = bad.length
+            ? 'Store IDs must be whole numbers. Not valid: ' + bad.join(', ')
+            : 'Enter at least one Store ID.';
+          return;
+        }
+        try {
+          await window.__saveUserSettings({
+            emailId: document.getElementById('emailId').value.trim(),
+            storeIds,
+          });
+        } catch (err) {
+          status.textContent = 'Failed to save: ' + (err && err.message ? err.message : String(err));
+        }
       });
     </script>
   </body></html>`;
@@ -48,22 +61,26 @@ export async function runFirstLaunchFlow(page: Page): Promise<UserSettings> {
 
   await page.exposeFunction(
     '__saveUserSettings',
-    (data: { emailId: string; profileIds: string[] }) => {
-      const profileIds = (data.profileIds || [])
-        .map((p) => String(p).trim())
-        .filter(Boolean);
-      if (profileIds.length === 0) {
-        console.warn('[FIRST-RUN] No profile IDs provided — ignoring submission.');
-        return;
+    (data: { emailId: string; storeIds: Array<string | number> }) => {
+      const tokens = (data.storeIds || []).map((p) => String(p).trim()).filter(Boolean);
+      const bad = tokens.filter((t) => !/^\d+$/.test(t) || Number(t) <= 0);
+      if (tokens.length === 0 || bad.length > 0) {
+        // Thrown back into the page, which shows the message under the form.
+        const msg = bad.length
+          ? `Store IDs must be whole numbers. Not valid: ${bad.join(', ')}`
+          : 'Enter at least one Store ID.';
+        console.warn(`[FIRST-RUN] ${msg} — ignoring submission.`);
+        throw new Error(msg);
       }
+      const storeIds = [...new Set(tokens.map(Number))];
       const settings: UserSettings = {
         emailId: data.emailId,
-        profileIds,
+        storeIds,
         firstRunCompletedAt: new Date().toISOString(),
       };
       saveUserSettings(settings);
       console.log(
-        `[FIRST-RUN] Settings saved: emailId="${settings.emailId}" profileIds=[${settings.profileIds.join(', ')}]`,
+        `[FIRST-RUN] Settings saved: emailId="${settings.emailId}" storeIds=[${settings.storeIds.join(', ')}]`,
       );
       resolveSettings(settings);
     },

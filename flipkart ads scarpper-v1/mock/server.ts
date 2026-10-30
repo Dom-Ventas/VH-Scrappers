@@ -1,24 +1,34 @@
 /**
- * Mock backend for local development — stands in for the real scrapper API so
- * the whole loop (fetch queries -> scrape -> post results) can be exercised
+ * Mock backend for local development — stands in for the VentaWiz scrapper API
+ * so the whole loop (fetch queue -> scrape -> post results) can be exercised
  * end to end with no network dependency.
  *
  *   npm run mock          # terminal 1
- *   npm run dev           # terminal 2 (uses the URLs in .env)
+ *   npm run dev           # terminal 2 (point QUERIES_API_URL / RESULTS_API_URL here)
  *
- * Routes mirror the production path shape, so pointing at the real backend is
- * a host swap in .env and nothing more:
+ * Routes mirror the VentaWiz paths, so pointing at the real backend is a host
+ * swap in .env and nothing more:
  *
- *   GET  /backend/api/v1/scrapper/queries?profile_id=PRF-001
- *        -> { items: [ { id, short_code, keyword } ] }   (seeded from queries.json)
- *   POST /backend/api/v1/scrapper/results
- *        -> 200 { ok: true }  or  400 { ok: false, errors: [...] }
- *   GET  /backend/api/v1/scrapper/results
+ *   GET  /v1/scrapper/search-term-queries?store_id=13&marketplace=flipkart&page=1&limit=100
+ *        -> { items: [ { store_id, short_code, search_term } ], pagination: { page, limit, total, pages } }
+ *           (seeded from queries.json; terms already stored this session are left out)
+ *   POST /v1/scrapper/search-term-results
+ *        -> 201 { id, store_id, search_term, sponsored, organic, created_at }
+ *           409 already stored this session · 422 { detail: [...] } contract violation
+ *   GET  /v1/scrapper/search-term-results
  *        -> everything received this session, for inspection
+ *   POST /v1/token
+ *        -> 200 { access_token, token_type: "Bearer", expires_in } for any client_id
+ *           starting svc_ and client_secret starting vws_ (a stand-in for DV-Auth's
+ *           client_credentials exchange; point VW_AUTH_URL at this server)
+ *           401 { error: "invalid_client" } otherwise
  *   GET  /health
  *
- * The POST handler validates the ScrapedResult contract and rejects anything
- * that drifts from it, so a schema regression fails loudly here instead of
+ * Every /v1/scrapper route requires `Authorization: Bearer <anything>` — the
+ * mock does not verify tokens, it only checks one was sent.
+ *
+ * The POST handler validates the result contract and rejects anything that
+ * drifts from it, so a schema regression fails loudly here instead of
  * silently reaching production.
  */
 import * as http from 'http';
@@ -26,17 +36,25 @@ import * as fs from 'fs';
 import * as path from 'path';
 
 const PORT = Number(process.env.MOCK_PORT || 8787);
-const BASE = '/backend/api/v1/scrapper';
-/** Set to a non-empty string to require `Authorization: Bearer <token>`. */
-const EXPECTED_TOKEN = process.env.MOCK_API_TOKEN || 'dummy-local-token';
+const BASE = '/v1/scrapper';
+/** Lifetime the fake /v1/token reports, in seconds (DV-Auth uses 600). */
+const TOKEN_TTL_S = Number(process.env.MOCK_TOKEN_TTL_S || 600);
+let nextToken = 1;
 
 const SEED_PATH = path.join(__dirname, 'queries.json');
 const RECEIVED_DIR = path.join(__dirname, 'received');
 
-type SeedRow = { id: string; short_code: string; keyword: string };
-type Seed = Record<string, SeedRow[]>;
+type SeedRow = { store_id: number; short_code: string; search_term: string };
+type Seed = SeedRow[];
 
 const received: unknown[] = [];
+/** `${store_id}|${lower-cased term}` already stored — the backend's 409 rule. */
+const stored = new Set<string>();
+let nextId = 1;
+
+function storedKey(storeId: number, term: string): string {
+  return `${storeId}|${term.toLowerCase()}`;
+}
 
 function loadSeed(): Seed {
   // Re-read per request so you can edit queries.json without restarting.
@@ -52,31 +70,22 @@ function send(res: http.ServerResponse, status: number, body: unknown): void {
   res.end(payload);
 }
 
-const RESULT_KEYS = [
-  'emailId',
-  'profileId',
-  'queryId',
-  'shortCode',
-  'searchTerm',
-  'scrapedAt',
-  'products',
-] as const;
+const RESULT_KEYS = ['store_id', 'search_term', 'products'] as const;
 
 const PRODUCT_KEYS = [
   'position',
-  'asin',
-  'isSponsored',
-  'title',
+  'mp_product_id',
+  'is_sponsored',
   'price',
   'rating',
-  'reviewCount',
-  'deliveryText',
-  'deliveryDays',
+  'review_count',
+  'delivery_days',
+  'title',
 ] as const;
 
 /**
- * Assert the posted body matches the ScrapedResult contract shared with the
- * Amazon scrapper. Returns a list of human-readable problems (empty = valid).
+ * Assert the posted body matches the VentaWiz search-term result contract.
+ * Returns a list of human-readable problems (empty = valid).
  */
 function validateResult(body: any): string[] {
   const errors: string[] = [];
@@ -91,16 +100,17 @@ function validateResult(body: any): string[] {
     }
   }
 
-  if (typeof body.scrapedAt === 'string' && Number.isNaN(Date.parse(body.scrapedAt))) {
-    errors.push(`scrapedAt "${body.scrapedAt}" is not a valid ISO timestamp`);
+  if (!Number.isInteger(body.store_id)) errors.push('store_id is not an integer');
+  if (typeof body.search_term !== 'string' || body.search_term.length === 0) {
+    errors.push('search_term must be a non-empty string');
   }
 
   if (!Array.isArray(body.products)) {
     errors.push('products is not an array');
     return errors;
   }
-  if (body.products.length > 10) {
-    errors.push(`products has ${body.products.length} entries (backend schema caps at 10)`);
+  if (body.products.length > 60) {
+    errors.push(`products has ${body.products.length} entries (backend schema caps at 60)`);
   }
 
   body.products.forEach((p: any, i: number) => {
@@ -112,22 +122,26 @@ function validateResult(body: any): string[] {
         errors.push(`products[${i}] unexpected key "${key}"`);
       }
     }
-    if (typeof p.position !== 'number') errors.push(`products[${i}].position is not a number`);
-    if (typeof p.isSponsored !== 'boolean') {
-      errors.push(`products[${i}].isSponsored is not a boolean`);
+    if (!Number.isInteger(p.position) || p.position < 1) {
+      errors.push(`products[${i}].position is not an integer >= 1`);
     }
-    // Every remaining field is nullable by design, so only the type of a
-    // present value is checked.
-    if (p.rating !== null && typeof p.rating !== 'number') {
-      errors.push(`products[${i}].rating must be number|null`);
+    if (typeof p.is_sponsored !== 'boolean') {
+      errors.push(`products[${i}].is_sponsored is not a boolean`);
     }
-    if (p.reviewCount !== null && typeof p.reviewCount !== 'number') {
-      errors.push(`products[${i}].reviewCount must be number|null`);
+    if (typeof p.mp_product_id !== 'string' || !p.mp_product_id) {
+      errors.push(`products[${i}].mp_product_id must be a non-empty string`);
     }
-    if (p.deliveryDays !== null && typeof p.deliveryDays !== 'number') {
-      errors.push(`products[${i}].deliveryDays must be number|null`);
+    // Every remaining field is nullable by design (missing = null, never 0 or
+    // -1), so only the type and range of a present value is checked.
+    if (p.rating !== null && (typeof p.rating !== 'number' || p.rating < 0 || p.rating > 5)) {
+      errors.push(`products[${i}].rating must be 0-5 or null`);
     }
-    for (const key of ['asin', 'title', 'price', 'deliveryText'] as const) {
+    for (const key of ['review_count', 'delivery_days'] as const) {
+      if (p[key] !== null && (!Number.isInteger(p[key]) || p[key] < 0)) {
+        errors.push(`products[${i}].${key} must be an integer >= 0 or null`);
+      }
+    }
+    for (const key of ['title', 'price'] as const) {
       if (p[key] !== null && typeof p[key] !== 'string') {
         errors.push(`products[${i}].${key} must be string|null`);
       }
@@ -137,9 +151,9 @@ function validateResult(body: any): string[] {
   return errors;
 }
 
+/** Any non-empty bearer is accepted — this mock does not verify tokens. */
 function authorized(req: http.IncomingMessage): boolean {
-  if (!EXPECTED_TOKEN) return true;
-  return (req.headers.authorization || '') === `Bearer ${EXPECTED_TOKEN}`;
+  return /^Bearer \S+/.test(req.headers.authorization || '');
 }
 
 function readBody(req: http.IncomingMessage): Promise<string> {
@@ -166,49 +180,101 @@ const server = http.createServer(async (req, res) => {
     return send(res, 200, { ok: true, received: received.length });
   }
 
+  if (route === 'POST /v1/token') {
+    let body: any = null;
+    try {
+      body = JSON.parse(await readBody(req));
+    } catch {
+      /* treated as bad credentials below */
+    }
+    const ok =
+      body?.grant_type === 'client_credentials' &&
+      typeof body.client_id === 'string' &&
+      body.client_id.startsWith('svc_') &&
+      typeof body.client_secret === 'string' &&
+      body.client_secret.startsWith('vws_');
+    if (!ok) {
+      console.log('[MOCK] 401 POST /v1/token — invalid_client');
+      return send(res, 401, { error: 'invalid_client' });
+    }
+    console.log(`[MOCK] 200 POST /v1/token client_id=${body.client_id}`);
+    return send(res, 200, {
+      access_token: `mock-token-${nextToken++}`,
+      token_type: 'Bearer',
+      expires_in: TOKEN_TTL_S,
+    });
+  }
+
   if (!authorized(req)) {
     console.log(`[MOCK] 401 ${route} — bad or missing bearer token`);
     return send(res, 401, { ok: false, error: 'unauthorized' });
   }
 
-  if (route === `GET ${BASE}/queries`) {
-    const profileId = url.searchParams.get('profile_id') || '';
-    const items = loadSeed()[profileId] || [];
-    console.log(`[MOCK] 200 GET queries profile_id="${profileId}" -> ${items.length} items`);
-    return send(res, 200, { items });
+  if (route === `GET ${BASE}/search-term-queries`) {
+    const storeIds = url.searchParams.getAll('store_id').map(Number);
+    if (storeIds.length === 0 || storeIds.length > 50 || storeIds.some((n) => !Number.isInteger(n))) {
+      console.log('[MOCK] 422 GET search-term-queries — need 1-50 integer store_id');
+      return send(res, 422, { detail: 'store_id: 1-50 integers required' });
+    }
+    const page = Math.max(1, Number(url.searchParams.get('page') || 1));
+    const limit = Math.min(100, Math.max(1, Number(url.searchParams.get('limit') || 20)));
+    const due = loadSeed().filter(
+      (r) => storeIds.includes(r.store_id) && !stored.has(storedKey(r.store_id, r.search_term)),
+    );
+    const items = due.slice((page - 1) * limit, page * limit);
+    const pages = Math.ceil(due.length / limit);
+    console.log(
+      `[MOCK] 200 GET search-term-queries store_id=[${storeIds.join(',')}] ` +
+        `marketplace=${url.searchParams.get('marketplace')} page=${page}/${pages} -> ${items.length} items`,
+    );
+    return send(res, 200, { items, pagination: { page, limit, total: due.length, pages } });
   }
 
-  if (route === `POST ${BASE}/results`) {
+  if (route === `POST ${BASE}/search-term-results`) {
     let body: any;
     try {
       body = JSON.parse(await readBody(req));
     } catch {
-      console.log('[MOCK] 400 POST results — body is not valid JSON');
-      return send(res, 400, { ok: false, errors: ['body is not valid JSON'] });
+      console.log('[MOCK] 422 POST search-term-results — body is not valid JSON');
+      return send(res, 422, { detail: ['body is not valid JSON'] });
     }
 
     const errors = validateResult(body);
     if (errors.length > 0) {
-      console.log(`[MOCK] 400 POST results — ${errors.length} contract violation(s):`);
+      console.log(`[MOCK] 422 POST search-term-results — ${errors.length} contract violation(s):`);
       errors.forEach((e) => console.log(`         - ${e}`));
-      return send(res, 400, { ok: false, errors });
+      return send(res, 422, { detail: errors });
     }
 
+    const key = storedKey(body.store_id, body.search_term);
+    if (stored.has(key)) {
+      console.log(`[MOCK] 409 POST search-term-results ${body.store_id} "${body.search_term}" — already stored`);
+      return send(res, 409, { detail: 'Already scraped today' });
+    }
+    stored.add(key);
     received.push(body);
     fs.mkdirSync(RECEIVED_DIR, { recursive: true });
-    const file = path.join(RECEIVED_DIR, `${body.profileId}_${body.queryId}.json`);
+    const slug = body.search_term.replace(/[^a-zA-Z0-9_-]+/g, '_');
+    const file = path.join(RECEIVED_DIR, `${body.store_id}_${slug}.json`);
     fs.writeFileSync(file, JSON.stringify(body, null, 2), 'utf-8');
 
-    const sponsored = body.products.filter((p: any) => p.isSponsored).length;
+    const sponsored = Math.min(5, body.products.filter((p: any) => p.is_sponsored).length);
+    const organic = Math.min(5, body.products.filter((p: any) => !p.is_sponsored).length);
     console.log(
-      `[MOCK] 200 POST results ${body.profileId}/${body.queryId} "${body.searchTerm}" ` +
-        `-> ${body.products.length} products (${sponsored} sponsored, ` +
-        `${body.products.length - sponsored} organic) saved to mock/received/${path.basename(file)}`,
+      `[MOCK] 201 POST search-term-results ${body.store_id} "${body.search_term}" ` +
+        `-> ${sponsored} sponsored, ${organic} organic saved to mock/received/${path.basename(file)}`,
     );
-    return send(res, 200, { ok: true, stored: body.products.length });
+    return send(res, 201, {
+      id: nextId++,
+      store_id: body.store_id,
+      search_term: body.search_term,
+      sponsored,
+      organic,
+      created_at: new Date().toISOString(),
+    });
   }
 
-  if (route === `GET ${BASE}/results`) {
+  if (route === `GET ${BASE}/search-term-results`) {
     return send(res, 200, { count: received.length, items: received });
   }
 
@@ -228,9 +294,12 @@ export function startMockServer(port: number = PORT): Promise<http.Server> {
     server.listen(port, () => {
       server.removeListener('error', reject);
       console.log(`[MOCK] listening on http://127.0.0.1:${port}`);
-      console.log(`[MOCK]   GET  http://127.0.0.1:${port}${BASE}/queries?profile_id=PRF-001`);
-      console.log(`[MOCK]   POST http://127.0.0.1:${port}${BASE}/results`);
-      console.log(`[MOCK]   bearer token: ${EXPECTED_TOKEN || '(auth disabled)'}`);
+      console.log(
+        `[MOCK]   GET  http://127.0.0.1:${port}${BASE}/search-term-queries?store_id=13&marketplace=flipkart`,
+      );
+      console.log(`[MOCK]   POST http://127.0.0.1:${port}${BASE}/search-term-results`);
+      console.log(`[MOCK]   POST http://127.0.0.1:${port}/v1/token  (fake service-account exchange)`);
+      console.log('[MOCK]   any bearer token is accepted');
       resolve(server);
     });
   });
